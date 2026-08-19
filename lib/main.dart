@@ -1,11 +1,16 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'data/app_state.dart';
+import 'firebase_options.dart';
+import 'services/auth_service.dart';
 import 'theme/app_colors.dart';
 import 'theme/app_theme.dart';
-import 'widgets/app_shell.dart';
+import 'theme/theme_controller.dart';
+import 'widgets/auth_gate.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   runApp(const BaliwagEduConnectApp());
 }
 
@@ -14,21 +19,24 @@ class BaliwagEduConnectApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider(
-      create: (_) => AppState(),
-      child: Consumer<AppState>(
-        builder: (context, app, _) {
-          AppColors.setDark(app.isDarkMode);
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => ThemeController()),
+        Provider(create: (_) => AuthService()),
+      ],
+      child: Consumer<ThemeController>(
+        builder: (context, theme, _) {
+          AppColors.setDark(theme.isDarkMode);
           return MaterialApp(
             title: 'Baliwag EduConnect',
             debugShowCheckedModeBanner: false,
-            theme: app.isDarkMode ? AppTheme.dark : AppTheme.light,
+            theme: theme.isDarkMode ? AppTheme.dark : AppTheme.light,
             // Keyed on mode so every screen remounts and re-reads the
             // now-updated AppColors values (they're plain static getters,
             // not InheritedWidget-driven, so a fresh build is required).
             home: KeyedSubtree(
-              key: ValueKey(app.isDarkMode),
-              child: const AppShell(),
+              key: ValueKey(theme.isDarkMode),
+              child: const AuthGate(),
             ),
           );
         },

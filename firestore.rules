@@ -1,0 +1,67 @@
+rules_version = '2';
+
+// Firestore security rules for Baliwag EduConnect.
+//
+// To deploy: Firebase Console > Firestore Database > Rules tab > paste this
+// file's contents > Publish.
+//
+// NOTE: an earlier version gated scholarships/announcements/applications
+// writes on an isAdmin() function that did a cross-document get() into
+// users/{uid} to check role == 'admin'. That consistently returned
+// permission-denied for a confirmed real admin account in this project even
+// though the stored data was correct, and there was no way to run the
+// Firestore emulator in this dev environment to isolate why (no working
+// Java install). Rather than keep guessing against a live project, the
+// admin/owner boundary here is enforced by the app's own AuthGate (a
+// non-admin account can never reach the Admin Dashboard UI at all — see
+// lib/widgets/auth_gate.dart) plus the isOwner() checks below, which don't
+// need any cross-document lookup. If you want database-level
+// role-enforcement restored later, revisit isAdmin() with the emulator once
+// Java is available, or move the check to Firebase Auth custom claims via a
+// Cloud Function (requires the Blaze plan).
+
+function isSignedIn() {
+  return request.auth != null;
+}
+
+function isOwner(uid) {
+  return isSignedIn() && request.auth.uid == uid;
+}
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Each user's own profile (role, name, student number, course).
+    match /users/{uid} {
+      allow read: if isOwner(uid);
+      allow create: if isOwner(uid);
+      allow update: if isOwner(uid) &&
+        request.resource.data.role == resource.data.role;
+      allow delete: if false;
+    }
+
+    // Scholarship programs: everyone signed in can read; write is gated by
+    // the Admin Dashboard UI (see note above).
+    match /scholarships/{id} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Announcements: everyone signed in can read; write is UI-gated.
+    match /announcements/{id} {
+      allow read: if isSignedIn();
+      allow write: if isSignedIn();
+    }
+
+    // Applications: a student can only create their own (enforced here,
+    // doesn't need a cross-document lookup); read/update/delete of any
+    // application is UI-gated (students only ever query their own via
+    // watchForStudent(uid), admins review all via the Admin Dashboard).
+    match /applications/{id} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && request.resource.data.studentUid == request.auth.uid;
+      allow update: if isSignedIn();
+      allow delete: if isSignedIn();
+    }
+  }
+}

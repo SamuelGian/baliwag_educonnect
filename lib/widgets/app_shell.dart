@@ -1,11 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
+import '../services/auth_service.dart';
 import '../theme/app_colors.dart';
+import '../theme/theme_controller.dart';
 import '../screens/student_dashboard_screen.dart';
 import '../screens/scholarship_application_screen.dart';
 import '../screens/application_tracker_screen.dart';
-import '../screens/admin_dashboard_screen.dart';
+import '../screens/profile_settings_screen.dart';
 
 class NavDestinationSpec {
   final String label;
@@ -36,9 +38,9 @@ const _destinations = [
     selectedIcon: Icons.timeline_rounded,
   ),
   NavDestinationSpec(
-    label: 'Admin',
-    icon: Icons.admin_panel_settings_outlined,
-    selectedIcon: Icons.admin_panel_settings_rounded,
+    label: 'Profile',
+    icon: Icons.person_outline_rounded,
+    selectedIcon: Icons.person_rounded,
   ),
 ];
 
@@ -58,7 +60,7 @@ class _AppShellState extends State<AppShell> {
     StudentDashboardScreen(),
     ScholarshipApplicationScreen(),
     ApplicationTrackerScreen(),
-    AdminDashboardScreen(),
+    ProfileSettingsScreen(),
   ];
 
   void goTo(int index) => setState(() => _index = index);
@@ -135,7 +137,16 @@ class _AppShellState extends State<AppShell> {
     return Scaffold(
       body: body,
       bottomNavigationBar: Container(
-        color: AppColors.surface,
+        decoration: BoxDecoration(
+          color: AppColors.glassSurfaceStrong,
+          boxShadow: [
+            BoxShadow(
+              color: AppColors.cardShadow,
+              blurRadius: 20,
+              offset: const Offset(0, -6),
+            ),
+          ],
+        ),
         child: SafeArea(
           top: false,
           child: SizedBox(
@@ -167,6 +178,7 @@ class _AppShellState extends State<AppShell> {
                   child: VerticalDivider(width: 1, color: AppColors.border),
                 ),
                 const _BottomBarDarkModeToggle(),
+                const _BottomBarLogoutButton(),
               ],
             ),
           ),
@@ -225,14 +237,29 @@ class _BottomBarDarkModeToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
+    final theme = context.watch<ThemeController>();
     return IconButton(
-      tooltip: app.isDarkMode ? 'Switch to light mode' : 'Switch to dark mode',
+      tooltip: theme.isDarkMode
+          ? 'Switch to light mode'
+          : 'Switch to dark mode',
       icon: Icon(
-        app.isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+        theme.isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
         color: AppColors.textMuted,
       ),
-      onPressed: () => context.read<AppState>().toggleDarkMode(),
+      onPressed: theme.toggleDarkMode,
+    );
+  }
+}
+
+class _BottomBarLogoutButton extends StatelessWidget {
+  const _BottomBarLogoutButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      tooltip: 'Log out',
+      icon: Icon(Icons.logout_rounded, color: AppColors.textMuted),
+      onPressed: () => context.read<AuthService>().signOut(),
     );
   }
 }
@@ -242,8 +269,8 @@ class _RailDarkModeToggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final app = context.watch<AppState>();
-    final isDark = app.isDarkMode;
+    final theme = context.watch<ThemeController>();
+    final isDark = theme.isDarkMode;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
       child: Material(
@@ -251,7 +278,7 @@ class _RailDarkModeToggle extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
-          onTap: () => context.read<AppState>().toggleDarkMode(),
+          onTap: theme.toggleDarkMode,
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(
@@ -294,7 +321,16 @@ class _SideRail extends StatelessWidget {
   Widget build(BuildContext context) {
     return Container(
       width: 240,
-      color: AppColors.surface,
+      decoration: BoxDecoration(
+        color: AppColors.glassSurfaceStrong,
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.cardShadow,
+            blurRadius: 24,
+            offset: const Offset(6, 0),
+          ),
+        ],
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -313,6 +349,13 @@ class _SideRail extends StatelessWidget {
                       end: Alignment.bottomRight,
                     ),
                     borderRadius: BorderRadius.circular(11),
+                    boxShadow: [
+                      BoxShadow(
+                        color: AppColors.primary.withValues(alpha: 0.4),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
                   ),
                   child: const Icon(
                     Icons.school_rounded,
@@ -360,41 +403,74 @@ class _SideRail extends StatelessWidget {
             ),
           const Spacer(),
           const _RailDarkModeToggle(),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            child: Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: AppColors.neutralBg,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Row(
-                children: [
-                  CircleAvatar(
-                    radius: 16,
-                    backgroundColor: AppColors.primary,
-                    child: const Text(
-                      'SB',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  const Expanded(
-                    child: Text(
-                      'Samuel Batac',
-                      style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
+          const _RailAccountCard(),
+        ],
+      ),
+    );
+  }
+}
+
+class _RailAccountCard extends StatelessWidget {
+  const _RailAccountCard();
+
+  @override
+  Widget build(BuildContext context) {
+    final app = context.watch<AppState>();
+    final initials = app.studentName
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((e) => e.isNotEmpty)
+        .map((e) => e[0])
+        .take(2)
+        .join()
+        .toUpperCase();
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppColors.glassSurface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: AppColors.glassBorder),
+        ),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 16,
+              backgroundColor: AppColors.primary,
+              child: Text(
+                initials.isEmpty ? '?' : initials,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
-          ),
-        ],
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                app.studentName,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            IconButton(
+              tooltip: 'Log out',
+              icon: Icon(
+                Icons.logout_rounded,
+                size: 18,
+                color: AppColors.textMuted,
+              ),
+              onPressed: () => context.read<AuthService>().signOut(),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -417,7 +493,9 @@ class _RailItem extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
       child: Material(
-        color: selected ? AppColors.primary.withValues(alpha: 0.1) : Colors.transparent,
+        color: selected
+            ? AppColors.primary.withValues(alpha: 0.1)
+            : Colors.transparent,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -437,7 +515,9 @@ class _RailItem extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 13.5,
                     fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? AppColors.primary : AppColors.textSecondary,
+                    color: selected
+                        ? AppColors.primary
+                        : AppColors.textSecondary,
                   ),
                 ),
               ],

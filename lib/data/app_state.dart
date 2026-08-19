@@ -1,42 +1,69 @@
 import 'dart:async';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import '../models/app_user.dart';
 import '../models/scholarship.dart';
 import '../models/application.dart';
 import '../models/announcement.dart';
 import '../services/ocr_service.dart';
 import '../services/text_match.dart';
+import 'scholarship_repository.dart';
+import 'application_repository.dart';
+import 'announcement_repository.dart';
 
-/// In-memory app state with mock data. Simulates backend behavior
-/// (like async document verification) so the UI can be demoed end-to-end
-/// without a real server.
+/// Firestore-backed app state, scoped to the signed-in user. Subscribes to
+/// live Firestore streams so Create/Update/Delete performed anywhere (by an
+/// admin, or by the OCR verification pipeline) reflect instantly across
+/// every screen without manual refreshing.
 class AppState extends ChangeNotifier {
+  AppUser user;
+
+  final _scholarshipRepo = ScholarshipRepository();
+  final _applicationRepo = ApplicationRepository();
+  final _announcementRepo = AnnouncementRepository();
   final _ocrService = OcrService();
 
-  /// Flip to true once a real OCR.space API key is in lib/config/secrets.dart.
-  /// While false, document verification is simulated so the feature can be
-  /// demoed without a live key.
-  static const _useRealOcr = false;
+  late final StreamSubscription _scholarshipsSub;
+  late final StreamSubscription _announcementsSub;
+  late final StreamSubscription _applicationsSub;
 
-  final String studentName = 'Samuel Batac';
-  final String studentNumber = '2023-BEC-00417';
-  final String course = 'BS Information Technology';
+  AppState({required this.user}) {
+    _scholarshipsSub = _scholarshipRepo.watchAll().listen((data) {
+      scholarships = data;
+      notifyListeners();
+    });
+    _announcementsSub = _announcementRepo.watchAll().listen((data) {
+      announcements = data;
+      notifyListeners();
+    });
+    final applicationStream = user.role == UserRole.admin
+        ? _applicationRepo.watchAll()
+        : _applicationRepo.watchForStudent(user.uid);
+    _applicationsSub = applicationStream.listen((data) {
+      applications = data;
+      notifyListeners();
+    });
+  }
 
-  bool isDarkMode = false;
+  String get studentName => user.fullName;
+  String get studentNumber => user.studentNumber;
+  String get course => user.course;
 
-  void toggleDarkMode() {
-    isDarkMode = !isDarkMode;
+  /// Persists edits made in Profile Settings and refreshes the in-memory
+  /// copy so the rest of the app (and the Apply form's auto-fill) sees the
+  /// new values immediately, without needing to log out and back in.
+  Future<void> updateProfile(AppUser updated) async {
+    await FirebaseFirestore.instance.collection('users').doc(user.uid).update(updated.toMap());
+    user = updated;
     notifyListeners();
   }
 
-  late final List<Scholarship> scholarships = _seedScholarships();
-  late final List<Announcement> announcements = _seedAnnouncements();
-  late final List<ScholarshipApplication> applications = [
-    ..._seedApplications(),
-    ..._seedOtherApplicants(),
-  ];
+  List<Scholarship> scholarships = [];
+  List<Announcement> announcements = [];
+  List<ScholarshipApplication> applications = [];
 
-  List<ScholarshipApplication> get myApplications =>
-      applications.where((a) => a.studentNumber == studentNumber).toList();
+  /// Already scoped to the signed-in student by the Firestore query above.
+  List<ScholarshipApplication> get myApplications => applications;
 
   int get pendingCount => myApplications
       .where(
@@ -47,9 +74,8 @@ class AppState extends ChangeNotifier {
       )
       .length;
 
-  int get approvedCount => myApplications
-      .where((a) => a.status == ApplicationStatus.approved)
-      .length;
+  int get approvedCount =>
+      myApplications.where((a) => a.status == ApplicationStatus.approved).length;
 
   int countByStatus(ApplicationStatus status) =>
       applications.where((a) => a.status == status).length;
@@ -60,81 +86,119 @@ class AppState extends ChangeNotifier {
       if (a.status != ApplicationStatus.approved) continue;
       final sch = scholarships.firstWhere(
         (s) => s.title == a.scholarshipTitle,
-        orElse: () => scholarships.first,
+        orElse: () => scholarships.isEmpty
+            ? Scholarship(
+                id: '',
+                title: '',
+                provider: '',
+                description: '',
+                amount: 0,
+                totalSlots: 0,
+                slotsFilled: 0,
+                deadline: DateTime.now(),
+                category: ScholarshipCategory.academic,
+                requirements: const [],
+              )
+            : scholarships.first,
       );
       total += sch.amount;
     }
     return total;
   }
 
-  void submitApplication(ScholarshipApplication application) {
-    applications.insert(0, application);
-    notifyListeners();
-    _verifyDocuments(application);
+  /// Create: submits a new application, then kicks off async document
+  /// upload + OCR verification in the background.
+  Future<void> submitApplication({
+    required Scholarship scholarship,
+    required String applicantFullName,
+    required List<DocumentItem> documents,
+  }) async {
+    final draft = ScholarshipApplication(
+      id: '',
+      scholarshipTitle: scholarship.title,
+      studentUid: user.uid,
+      studentName: user.fullName,
+      studentNumber: user.studentNumber,
+      dateSubmitted: DateTime.now(),
+      status: ApplicationStatus.submitted,
+      documents: documents,
+      messages: const [],
+      applicantFullName: applicantFullName,
+    );
+    final id = await _applicationRepo.create(draft);
+    unawaited(_verifyDocuments(id, documents, applicantFullName));
   }
 
-  /// Runs each uploaded document through OCR and checks whether the
-  /// applicant's name (as typed on the form) appears in the recognized
-  /// text. This is the "OCR auto-match against student record" feature.
-  Future<void> _verifyDocuments(ScholarshipApplication application) async {
-    for (final doc in application.documents) {
-      if (!doc.uploaded) continue;
+  /// Runs each document through OCR directly from its in-memory bytes (no
+  /// Firebase Storage involved — this project runs on the Spark/free plan,
+  /// which doesn't include Storage) and fuzzy-matches the recognized text
+  /// against the applicant's typed name — persisting a live status
+  /// (verifying / matched / needs manual review) to Firestore after each
+  /// document so the Tracker and Admin Dashboard update in place.
+  Future<void> _verifyDocuments(
+    String applicationId,
+    List<DocumentItem> documents,
+    String applicantFullName,
+  ) async {
+    for (final doc in documents) {
+      if (!doc.uploaded || doc.bytes == null) continue;
       doc.matchStatus = DocMatchStatus.verifying;
-      notifyListeners();
-
-      if (!_useRealOcr) {
-        await Future.delayed(const Duration(milliseconds: 900));
-        doc.matchStatus = DocMatchStatus.matched;
-        doc.matchNote =
-            'Name matched via OCR text extraction against "${application.applicantFullName}".';
-        notifyListeners();
-        continue;
-      }
-
-      final bytes = doc.bytes;
-      if (bytes == null) {
-        doc.matchStatus = DocMatchStatus.mismatch;
-        doc.matchNote = 'Could not read the uploaded file for auto-verification.';
-        notifyListeners();
-        continue;
-      }
+      await _applicationRepo.updateDocuments(applicationId, documents);
 
       try {
         final text = await _ocrService.extractText(
-          bytes: bytes,
+          bytes: doc.bytes!,
           fileName: doc.fileName ?? 'document',
         );
-        final result = matchNameAgainstText(application.applicantFullName, text);
-        doc.matchStatus = result.matched
-            ? DocMatchStatus.matched
-            : DocMatchStatus.mismatch;
+        final result = matchNameAgainstText(applicantFullName, text);
+        doc.matchStatus =
+            result.matched ? DocMatchStatus.matched : DocMatchStatus.mismatch;
         doc.matchNote = result.matched
             ? 'Name matched (${(result.score * 100).round()}% of name tokens found).'
-            : 'Name on document does not clearly match "${application.applicantFullName}".';
+            : 'Name on document does not clearly match "$applicantFullName".';
       } on OcrException catch (e) {
         doc.matchStatus = DocMatchStatus.mismatch;
         doc.matchNote = e.message;
+      } catch (_) {
+        doc.matchStatus = DocMatchStatus.mismatch;
+        doc.matchNote = 'Could not verify this document automatically. Flagged for manual review.';
       }
-      notifyListeners();
+      await _applicationRepo.updateDocuments(applicationId, documents);
     }
-    application.status = ApplicationStatus.documentVerification;
-    notifyListeners();
-    await Future.delayed(const Duration(milliseconds: 600));
-    application.status = ApplicationStatus.underReview;
-    notifyListeners();
+
+    await _applicationRepo.updateStatus(applicationId, ApplicationStatus.documentVerification);
+    await Future.delayed(const Duration(milliseconds: 500));
+    await _applicationRepo.updateStatus(applicationId, ApplicationStatus.underReview);
   }
 
-  void updateApplicationStatus(String id, ApplicationStatus status) {
-    final app = applications.firstWhere((a) => a.id == id);
-    app.status = status;
-    notifyListeners();
+  Future<void> updateApplicationStatus(String id, ApplicationStatus status) {
+    return _applicationRepo.updateStatus(id, status);
   }
 
-  List<Scholarship> _seedScholarships() {
+  Future<void> sendAdminMessage(String applicationId, String message) {
+    final app = applications.firstWhere((a) => a.id == applicationId);
+    return _applicationRepo.addMessage(
+      applicationId,
+      AdminMessage(sender: user.fullName, message: message, date: DateTime.now()),
+      app.messages,
+    );
+  }
+
+  // --- Scholarship CRUD (Admin: "Manage Scholarships") ---------------------
+
+  Future<void> createScholarship(Scholarship draft) => _scholarshipRepo.create(draft);
+  Future<void> updateScholarship(Scholarship scholarship) =>
+      _scholarshipRepo.update(scholarship);
+  Future<void> deleteScholarship(String id) => _scholarshipRepo.delete(id);
+
+  /// Populates a handful of realistic starter programs via the same
+  /// [createScholarship] path the "Add Scholarship" form uses, so there's
+  /// something to apply to right away without hand-typing five forms.
+  Future<void> seedSampleScholarships() async {
     final now = DateTime.now();
-    return [
+    final samples = [
       Scholarship(
-        id: 'sch-01',
+        id: '',
         title: 'Baliwag Merit Scholarship',
         provider: 'Municipal Government of Baliwag',
         description:
@@ -152,7 +216,7 @@ class AppState extends ChangeNotifier {
         ],
       ),
       Scholarship(
-        id: 'sch-02',
+        id: '',
         title: 'Educational Assistance Program',
         provider: 'City Scholarship Office',
         description:
@@ -169,7 +233,7 @@ class AppState extends ChangeNotifier {
         ],
       ),
       Scholarship(
-        id: 'sch-03',
+        id: '',
         title: 'Arts & Culture Grant',
         provider: 'Baliwag Cultural Affairs Office',
         description:
@@ -186,7 +250,7 @@ class AppState extends ChangeNotifier {
         ],
       ),
       Scholarship(
-        id: 'sch-04',
+        id: '',
         title: 'Student-Athlete Support Grant',
         provider: 'Sports Development Council',
         description:
@@ -202,7 +266,7 @@ class AppState extends ChangeNotifier {
         ],
       ),
       Scholarship(
-        id: 'sch-05',
+        id: '',
         title: 'TechVoc Skills Scholarship',
         provider: 'TESDA Provincial Office',
         description:
@@ -218,167 +282,23 @@ class AppState extends ChangeNotifier {
         ],
       ),
     ];
+    for (final s in samples) {
+      await _scholarshipRepo.create(s);
+    }
   }
 
-  List<Announcement> _seedAnnouncements() {
-    final now = DateTime.now();
-    return [
-      Announcement(
-        title: 'Extended deadline for Educational Assistance Program',
-        body:
-            'Submission has been extended to give more applicants time to complete requirements.',
-        date: now.subtract(const Duration(days: 1)),
-        type: AnnouncementType.urgent,
-      ),
-      Announcement(
-        title: 'Orientation for new scholars',
-        body:
-            'Mandatory orientation for newly approved scholars will be held at the Baliwag Bayan Hall.',
-        date: now.subtract(const Duration(days: 2)),
-        type: AnnouncementType.event,
-      ),
-      Announcement(
-        title: 'Document upload now supports auto-verification',
-        body:
-            'Uploaded documents are now automatically checked against your student records for faster processing.',
-        date: now.subtract(const Duration(days: 4)),
-        type: AnnouncementType.info,
-      ),
-    ];
-  }
+  // --- Announcement CRUD (Admin) -------------------------------------------
 
-  List<ScholarshipApplication> _seedApplications() {
-    final now = DateTime.now();
-    return [
-      ScholarshipApplication(
-        id: 'APP-2026-0142',
-        scholarshipTitle: 'Baliwag Merit Scholarship',
-        studentName: studentName,
-        studentNumber: studentNumber,
-        dateSubmitted: now.subtract(const Duration(days: 6)),
-        status: ApplicationStatus.underReview,
-        documents: [
-          DocumentItem(
-            name: 'Form 137 / Certificate of Grades',
-            uploaded: true,
-            fileName: 'form137.pdf',
-            matchStatus: DocMatchStatus.matched,
-          ),
-          DocumentItem(
-            name: 'Certificate of Enrollment',
-            uploaded: true,
-            fileName: 'cor_2026.pdf',
-            matchStatus: DocMatchStatus.matched,
-          ),
-          DocumentItem(
-            name: 'Barangay Certificate of Residency',
-            uploaded: true,
-            fileName: 'brgy_cert.jpg',
-            matchStatus: DocMatchStatus.matched,
-          ),
-          DocumentItem(
-            name: 'Income Tax Return / Certificate of Indigency',
-            uploaded: true,
-            fileName: 'itr_indigency.pdf',
-            matchStatus: DocMatchStatus.mismatch,
-          ),
-        ],
-        messages: [
-          AdminMessage(
-            sender: 'Scholarship Office',
-            message:
-                'Your Certificate of Indigency name does not fully match our records. Please re-upload a clearer copy.',
-            date: now.subtract(const Duration(days: 1)),
-          ),
-        ],
-      ),
-      ScholarshipApplication(
-        id: 'APP-2026-0098',
-        scholarshipTitle: 'Educational Assistance Program',
-        studentName: studentName,
-        studentNumber: studentNumber,
-        dateSubmitted: now.subtract(const Duration(days: 18)),
-        status: ApplicationStatus.approved,
-        documents: [
-          DocumentItem(
-            name: 'Certificate of Indigency',
-            uploaded: true,
-            fileName: 'indigency.pdf',
-            matchStatus: DocMatchStatus.matched,
-          ),
-          DocumentItem(
-            name: 'Certificate of Enrollment',
-            uploaded: true,
-            fileName: 'cor.pdf',
-            matchStatus: DocMatchStatus.matched,
-          ),
-          DocumentItem(
-            name: 'Valid ID of Parent/Guardian',
-            uploaded: true,
-            fileName: 'parent_id.jpg',
-            matchStatus: DocMatchStatus.matched,
-          ),
-        ],
-        messages: [
-          AdminMessage(
-            sender: 'Scholarship Office',
-            message:
-                'Congratulations! Your application has been approved. Please wait for the release schedule.',
-            date: now.subtract(const Duration(days: 3)),
-          ),
-        ],
-      ),
-    ];
-  }
+  Future<void> createAnnouncement(Announcement draft) => _announcementRepo.create(draft);
+  Future<void> updateAnnouncement(Announcement announcement) =>
+      _announcementRepo.update(announcement);
+  Future<void> deleteAnnouncement(String id) => _announcementRepo.delete(id);
 
-  List<ScholarshipApplication> _seedOtherApplicants() {
-    final now = DateTime.now();
-    final names = [
-      'Maria Santos',
-      'John Paul Reyes',
-      'Angela Cruz',
-      'Mark Anthony Dela Cruz',
-      'Kristine Bautista',
-      'Rafael Garcia',
-      'Nicole Fernandez',
-      'Joshua Ramos',
-      'Bea Villanueva',
-      'Carlo Mendoza',
-      'Ella Gonzales',
-      'Patrick Aquino',
-    ];
-    final titles = scholarships.map((s) => s.title).toList();
-    final statuses = [
-      ApplicationStatus.submitted,
-      ApplicationStatus.documentVerification,
-      ApplicationStatus.underReview,
-      ApplicationStatus.approved,
-      ApplicationStatus.rejected,
-    ];
-
-    return List.generate(names.length, (i) {
-      final status = statuses[i % statuses.length];
-      final docCount = 2 + (i % 3);
-      return ScholarshipApplication(
-        id: 'APP-2026-0${200 + i}',
-        scholarshipTitle: titles[i % titles.length],
-        studentName: names[i],
-        studentNumber: '2023-BEC-${(500 + i * 7).toString().padLeft(5, '0')}',
-        dateSubmitted: now.subtract(Duration(days: 1 + i)),
-        status: status,
-        documents: List.generate(
-          docCount,
-          (d) => DocumentItem(
-            name: 'Requirement ${d + 1}',
-            uploaded: true,
-            fileName: 'document_${d + 1}.pdf',
-            matchStatus: status == ApplicationStatus.submitted
-                ? DocMatchStatus.pending
-                : (i % 5 == 0 ? DocMatchStatus.mismatch : DocMatchStatus.matched),
-          ),
-        ),
-        messages: const [],
-      );
-    });
+  @override
+  void dispose() {
+    _scholarshipsSub.cancel();
+    _announcementsSub.cancel();
+    _applicationsSub.cancel();
+    super.dispose();
   }
 }

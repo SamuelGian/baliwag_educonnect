@@ -4,7 +4,9 @@ import 'package:provider/provider.dart';
 import '../data/app_state.dart';
 import '../models/application.dart';
 import '../theme/app_colors.dart';
+import '../widgets/ambient_background.dart';
 import '../widgets/doc_match_badge.dart';
+import '../widgets/glass_panel.dart';
 import '../widgets/status_chip.dart';
 
 const _stages = [
@@ -23,32 +25,44 @@ class ApplicationTrackerScreen extends StatelessWidget {
     final wide = MediaQuery.of(context).size.width >= 900;
     final apps = app.myApplications;
 
-    return SafeArea(
-      child: SingleChildScrollView(
-        padding: EdgeInsets.symmetric(horizontal: wide ? 32 : 18, vertical: 24),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 900),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Application Tracker',
-                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: AppColors.textPrimary),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Monitor the progress, document verification, and admin messages for your applications.',
-                style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
-              ),
-              const SizedBox(height: 22),
-              if (apps.isEmpty)
-                const _EmptyTracker()
-              else
-                for (final a in apps) ...[
-                  _ApplicationCard(app: a),
-                  const SizedBox(height: 18),
-                ],
-            ],
+    return AmbientBackground(
+      child: SafeArea(
+        child: SingleChildScrollView(
+          padding: EdgeInsets.symmetric(
+            horizontal: wide ? 32 : 18,
+            vertical: 24,
+          ),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 900),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Application Tracker',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.textPrimary,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Monitor the progress, document verification, and admin messages for your applications.',
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                if (apps.isEmpty)
+                  const _EmptyTracker()
+                else
+                  for (final a in apps) ...[
+                    _ApplicationCard(app: a),
+                    const SizedBox(height: 18),
+                  ],
+              ],
+            ),
           ),
         ),
       ),
@@ -61,26 +75,26 @@ class _EmptyTracker extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(40),
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: Column(
-        children: [
-          Icon(Icons.inbox_rounded, size: 40, color: AppColors.textMuted),
-          const SizedBox(height: 12),
-          const Text('No applications yet', style: TextStyle(fontWeight: FontWeight.w700)),
-          const SizedBox(height: 4),
-          Text(
-            'Apply to a scholarship from the Apply tab to start tracking it here.',
-            style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
-            textAlign: TextAlign.center,
-          ),
-        ],
+    return SizedBox(
+      width: double.infinity,
+      child: GlassPanel(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          children: [
+            Icon(Icons.inbox_rounded, size: 40, color: AppColors.textMuted),
+            const SizedBox(height: 12),
+            const Text(
+              'No applications yet',
+              style: TextStyle(fontWeight: FontWeight.w700),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Apply to a scholarship from the Apply tab to start tracking it here.',
+              style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -93,13 +107,8 @@ class _ApplicationCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GlassPanel(
       padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -112,12 +121,18 @@ class _ApplicationCard extends StatelessWidget {
                   children: [
                     Text(
                       app.scholarshipTitle,
-                      style: const TextStyle(fontSize: 15.5, fontWeight: FontWeight.w700),
+                      style: const TextStyle(
+                        fontSize: 15.5,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       '${app.id} • Submitted ${DateFormat('MMM d, y').format(app.dateSubmitted)}',
-                      style: TextStyle(fontSize: 11.5, color: AppColors.textSecondary),
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: AppColors.textSecondary,
+                      ),
                     ),
                   ],
                 ),
@@ -128,7 +143,10 @@ class _ApplicationCard extends StatelessWidget {
           const SizedBox(height: 20),
           _Timeline(status: app.status),
           const SizedBox(height: 20),
-          const Text('Documents', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+          const Text(
+            'Documents',
+            style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+          ),
           const SizedBox(height: 10),
           for (final d in app.documents)
             Padding(
@@ -142,13 +160,21 @@ class _ApplicationCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  Flexible(child: DocMatchBadge(status: d.matchStatus, note: d.matchNote)),
+                  Flexible(
+                    child: DocMatchBadge(
+                      status: d.matchStatus,
+                      note: d.matchNote,
+                    ),
+                  ),
                 ],
               ),
             ),
           if (app.messages.isNotEmpty) ...[
             const SizedBox(height: 10),
-            const Text('Messages from Admin', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13)),
+            const Text(
+              'Messages from Admin',
+              style: TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+            ),
             const SizedBox(height: 10),
             for (final m in app.messages)
               Container(
@@ -163,11 +189,20 @@ class _ApplicationCard extends StatelessWidget {
                   children: [
                     Row(
                       children: [
-                        Text(m.sender, style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 12)),
+                        Text(
+                          m.sender,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
                         const SizedBox(width: 8),
                         Text(
                           DateFormat('MMM d, h:mm a').format(m.date),
-                          style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: AppColors.textMuted,
+                          ),
                         ),
                       ],
                     ),
@@ -202,7 +237,11 @@ class _Timeline extends StatelessWidget {
               child: Container(
                 height: 3,
                 margin: const EdgeInsets.only(top: 13),
-                color: i <= current ? (rejected && i == current ? AppColors.danger : AppColors.primary) : AppColors.border,
+                color: i <= current
+                    ? (rejected && i == current
+                          ? AppColors.danger
+                          : AppColors.primary)
+                    : AppColors.border,
               ),
             ),
           Expanded(
@@ -219,21 +258,25 @@ class _Timeline extends StatelessWidget {
                     color: i < current
                         ? AppColors.primary
                         : i == current
-                            ? (rejected ? AppColors.danger : AppColors.primary)
-                            : AppColors.neutralBg,
+                        ? (rejected ? AppColors.danger : AppColors.primary)
+                        : AppColors.neutralBg,
                     border: Border.all(
-                      color: i <= current ? (rejected && i == current ? AppColors.danger : AppColors.primary) : AppColors.border,
+                      color: i <= current
+                          ? (rejected && i == current
+                                ? AppColors.danger
+                                : AppColors.primary)
+                          : AppColors.border,
                     ),
                   ),
                   child: i < current
                       ? const Icon(Icons.check, size: 14, color: Colors.white)
                       : i == current
-                          ? Icon(
-                              rejected ? Icons.close_rounded : Icons.circle,
-                              size: rejected ? 14 : 8,
-                              color: Colors.white,
-                            )
-                          : null,
+                      ? Icon(
+                          rejected ? Icons.close_rounded : Icons.circle,
+                          size: rejected ? 14 : 8,
+                          color: Colors.white,
+                        )
+                      : null,
                 ),
                 const SizedBox(height: 6),
                 Text(
@@ -243,8 +286,12 @@ class _Timeline extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 10,
-                    fontWeight: i == current ? FontWeight.w700 : FontWeight.w500,
-                    color: i <= current ? AppColors.textPrimary : AppColors.textMuted,
+                    fontWeight: i == current
+                        ? FontWeight.w700
+                        : FontWeight.w500,
+                    color: i <= current
+                        ? AppColors.textPrimary
+                        : AppColors.textMuted,
                   ),
                 ),
               ],

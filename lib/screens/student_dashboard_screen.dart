@@ -1,3 +1,4 @@
+import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
@@ -6,10 +7,13 @@ import '../models/announcement.dart';
 import '../models/application.dart';
 import '../models/scholarship.dart';
 import '../theme/app_colors.dart';
+import '../widgets/ambient_background.dart';
 import '../widgets/doc_match_badge.dart';
+import '../widgets/glass_panel.dart';
 import '../widgets/scholarship_card.dart';
 import '../widgets/section_header.dart';
 import '../widgets/stat_card.dart';
+import '../widgets/weather_card.dart';
 
 class StudentDashboardScreen extends StatelessWidget {
   const StudentDashboardScreen({super.key});
@@ -18,122 +22,154 @@ class StudentDashboardScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     final wide = MediaQuery.of(context).size.width >= 900;
-    final urgentScholarship = app.scholarships.reduce(
-      (a, b) => a.daysLeft <= b.daysLeft ? a : b,
-    );
+    final urgentScholarship = app.scholarships.isEmpty
+        ? null
+        : app.scholarships.reduce((a, b) => a.daysLeft <= b.daysLeft ? a : b);
 
-    return SafeArea(
-      child: CustomScrollView(
-        slivers: [
-          SliverToBoxAdapter(child: _Hero(app: app, wide: wide)),
-          SliverPadding(
-            padding: EdgeInsets.symmetric(
-              horizontal: wide ? 32 : 18,
-              vertical: 24,
+    return AmbientBackground(
+      child: SafeArea(
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: _Hero(app: app, wide: wide),
             ),
-            sliver: SliverList(
-              delegate: SliverChildListDelegate([
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(
-                      child: StatCard(
-                        label: 'Active Applications',
-                        value: '${app.pendingCount}',
-                        icon: Icons.pending_actions_rounded,
-                        color: AppColors.info,
-                      ),
-                    ),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: StatCard(
-                        label: 'Approved',
-                        value: '${app.approvedCount}',
-                        icon: Icons.verified_rounded,
-                        color: AppColors.success,
-                      ),
-                    ),
-                    if (wide) ...[
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: StatCard(
-                          label: 'Open Scholarships',
-                          value: '${app.scholarships.length}',
-                          icon: Icons.card_giftcard_rounded,
-                          color: AppColors.accentDark,
-                        ),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(
-                        child: StatCard(
-                          label: 'Closing Soonest',
-                          value: '${urgentScholarship.daysLeft}d',
-                          icon: Icons.timer_rounded,
-                          color: AppColors.danger,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-                const SizedBox(height: 28),
-                const _OcrPreviewPanel(),
-                const SizedBox(height: 28),
-                const SectionHeader(
-                  title: 'Available Scholarships',
-                  subtitle: 'Programs open for application right now',
-                ),
-                const SizedBox(height: 16),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    const spacing = 14.0;
-                    const minCardWidth = 260.0;
-                    final columns = (constraints.maxWidth / (minCardWidth + spacing))
-                        .floor()
-                        .clamp(1, 4);
-                    final cardWidth =
-                        (constraints.maxWidth - spacing * (columns - 1)) / columns;
-                    return Wrap(
-                      spacing: spacing,
-                      runSpacing: spacing,
-                      children: [
-                        for (final s in app.scholarships)
-                          SizedBox(
-                            width: cardWidth,
-                            child: ScholarshipCard(scholarship: s, onApply: () {}),
-                          ),
-                      ],
-                    );
-                  },
-                ),
-                const SizedBox(height: 28),
-                if (wide)
+            SliverPadding(
+              padding: EdgeInsets.symmetric(
+                horizontal: wide ? 32 : 18,
+                vertical: 24,
+              ),
+              sliver: SliverList(
+                delegate: SliverChildListDelegate([
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        flex: 3,
-                        child: _AnnouncementsPanel(announcements: app.announcements),
+                        child: StatCard(
+                          label: 'Active Applications',
+                          value: '${app.pendingCount}',
+                          icon: Icons.pending_actions_rounded,
+                          color: AppColors.info,
+                        ),
                       ),
-                      const SizedBox(width: 20),
+                      const SizedBox(width: 14),
                       Expanded(
-                        flex: 2,
-                        child: _DeadlinesPanel(scholarships: app.scholarships),
+                        child: StatCard(
+                          label: 'Approved',
+                          value: '${app.approvedCount}',
+                          icon: Icons.verified_rounded,
+                          color: AppColors.success,
+                        ),
                       ),
-                    ],
-                  )
-                else
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _AnnouncementsPanel(announcements: app.announcements),
-                      const SizedBox(height: 20),
-                      _DeadlinesPanel(scholarships: app.scholarships),
+                      if (wide) ...[
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: StatCard(
+                            label: 'Open Scholarships',
+                            value: '${app.scholarships.length}',
+                            icon: Icons.card_giftcard_rounded,
+                            color: AppColors.accentDark,
+                          ),
+                        ),
+                        if (urgentScholarship != null) ...[
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: StatCard(
+                              label: 'Closing Soonest',
+                              value: '${urgentScholarship.daysLeft}d',
+                              icon: Icons.timer_rounded,
+                              color: AppColors.danger,
+                            ),
+                          ),
+                        ],
+                      ],
                     ],
                   ),
-              ]),
+                  const SizedBox(height: 28),
+                  if (wide)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Expanded(flex: 3, child: _OcrPreviewPanel()),
+                        const SizedBox(width: 20),
+                        const SizedBox(width: 260, child: WeatherCard()),
+                      ],
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const _OcrPreviewPanel(),
+                        const SizedBox(height: 20),
+                        const WeatherCard(),
+                      ],
+                    ),
+                  const SizedBox(height: 28),
+                  const SectionHeader(
+                    title: 'Available Scholarships',
+                    subtitle: 'Programs open for application right now',
+                  ),
+                  const SizedBox(height: 16),
+                  LayoutBuilder(
+                    builder: (context, constraints) {
+                      const spacing = 14.0;
+                      const minCardWidth = 260.0;
+                      final columns =
+                          (constraints.maxWidth / (minCardWidth + spacing))
+                              .floor()
+                              .clamp(1, 4);
+                      final cardWidth =
+                          (constraints.maxWidth - spacing * (columns - 1)) /
+                          columns;
+                      return Wrap(
+                        spacing: spacing,
+                        runSpacing: spacing,
+                        children: [
+                          for (final s in app.scholarships)
+                            SizedBox(
+                              width: cardWidth,
+                              child: ScholarshipCard(
+                                scholarship: s,
+                                onApply: () {},
+                              ),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 28),
+                  if (wide)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          flex: 3,
+                          child: _AnnouncementsPanel(
+                            announcements: app.announcements,
+                          ),
+                        ),
+                        const SizedBox(width: 20),
+                        Expanded(
+                          flex: 2,
+                          child: _DeadlinesPanel(
+                            scholarships: app.scholarships,
+                          ),
+                        ),
+                      ],
+                    )
+                  else
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _AnnouncementsPanel(announcements: app.announcements),
+                        const SizedBox(height: 20),
+                        _DeadlinesPanel(scholarships: app.scholarships),
+                      ],
+                    ),
+                ]),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -146,31 +182,43 @@ class _OcrPreviewPanel extends StatelessWidget {
   const _OcrPreviewPanel();
 
   static const _sample = [
-    ('Form 137 / Certificate of Grades', DocMatchStatus.matched, 'Name matched via OCR text extraction.'),
-    ('Certificate of Enrollment', DocMatchStatus.matched, 'Name matched via OCR text extraction.'),
-    ('Certificate of Indigency', DocMatchStatus.mismatch, 'Name on document does not clearly match applicant record.'),
+    (
+      'Form 137 / Certificate of Grades',
+      DocMatchStatus.matched,
+      'Name matched via OCR text extraction.',
+    ),
+    (
+      'Certificate of Enrollment',
+      DocMatchStatus.matched,
+      'Name matched via OCR text extraction.',
+    ),
+    (
+      'Certificate of Indigency',
+      DocMatchStatus.mismatch,
+      'Name on document does not clearly match applicant record.',
+    ),
   ];
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GlassPanel(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.document_scanner_rounded, color: AppColors.primary, size: 20),
+              Icon(
+                Icons.document_scanner_rounded,
+                color: AppColors.primary,
+                size: 20,
+              ),
               const SizedBox(width: 8),
               const Expanded(
                 child: SectionHeader(
                   title: 'OCR Document Verification',
-                  subtitle: 'Uploaded documents are auto-checked against your student record',
+                  subtitle:
+                      'Uploaded documents are auto-checked against your student record',
                 ),
               ),
             ],
@@ -184,7 +232,10 @@ class _OcrPreviewPanel extends StatelessWidget {
                   Expanded(
                     child: Text(
                       name,
-                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -207,7 +258,12 @@ class _Hero extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: EdgeInsets.fromLTRB(wide ? 32 : 18, wide ? 28 : 20, wide ? 32 : 18, 36),
+      padding: EdgeInsets.fromLTRB(
+        wide ? 32 : 18,
+        wide ? 28 : 20,
+        wide ? 32 : 18,
+        36,
+      ),
       decoration: BoxDecoration(
         gradient: LinearGradient(
           colors: AppColors.heroGradient,
@@ -243,32 +299,43 @@ class _Hero extends StatelessWidget {
             style: const TextStyle(color: Colors.white70, fontSize: 13),
           ),
           const SizedBox(height: 22),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-            ),
-            child: Row(
-              children: [
-                Icon(Icons.notifications_active_rounded, color: AppColors.accent),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    app.announcements.isNotEmpty
-                        ? app.announcements.first.title
-                        : 'No new announcements',
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+          ClipRRect(
+            borderRadius: BorderRadius.circular(16),
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(
+                    color: Colors.white.withValues(alpha: 0.25),
                   ),
                 ),
-              ],
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.notifications_active_rounded,
+                      color: AppColors.accent,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        app.announcements.isNotEmpty
+                            ? app.announcements.first.title
+                            : 'No new announcements',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             ),
           ),
         ],
@@ -284,13 +351,8 @@ class _AnnouncementsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GlassPanel(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -331,12 +393,18 @@ class _AnnouncementTile extends StatelessWidget {
             children: [
               Text(
                 a.title,
-                style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 3),
               Text(
                 a.body,
-                style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+                style: TextStyle(
+                  fontSize: 12.5,
+                  color: AppColors.textSecondary,
+                ),
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
               ),
@@ -360,14 +428,10 @@ class _DeadlinesPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final sorted = [...scholarships]..sort((a, b) => a.daysLeft.compareTo(b.daysLeft));
-    return Container(
+    final sorted = [...scholarships]
+      ..sort((a, b) => a.daysLeft.compareTo(b.daysLeft));
+    return GlassPanel(
       padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: AppColors.border),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -383,7 +447,9 @@ class _DeadlinesPanel extends StatelessWidget {
                     height: 38,
                     alignment: Alignment.center,
                     decoration: BoxDecoration(
-                      color: s.daysLeft <= 5 ? AppColors.dangerBg : AppColors.infoBg,
+                      color: s.daysLeft <= 5
+                          ? AppColors.dangerBg
+                          : AppColors.infoBg,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
@@ -391,7 +457,9 @@ class _DeadlinesPanel extends StatelessWidget {
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: s.daysLeft <= 5 ? AppColors.danger : AppColors.info,
+                        color: s.daysLeft <= 5
+                            ? AppColors.danger
+                            : AppColors.info,
                       ),
                     ),
                   ),
@@ -399,7 +467,10 @@ class _DeadlinesPanel extends StatelessWidget {
                   Expanded(
                     child: Text(
                       s.title,
-                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                     ),

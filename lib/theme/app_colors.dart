@@ -40,6 +40,12 @@ class _Light {
   static const Color textMuted = Color(0xFF9CA3AF);
 
   static const Color cardShadow = Color(0x14101828);
+
+  // Glassmorphism: frosted panels sit on top of ambient gradient
+  // backgrounds, so these need to read as translucent white, not solid.
+  static const Color glassSurface = Color(0xCCFFFFFF);
+  static const Color glassSurfaceStrong = Color(0xE6FFFFFF);
+  static const Color glassBorder = Color(0x99FFFFFF);
 }
 
 /// Dark-mode palette values. Same hues as light mode, re-stepped for a dark
@@ -82,6 +88,13 @@ class _Dark {
   static const Color textMuted = Color(0xFF7E8AA3);
 
   static const Color cardShadow = Color(0x40000000);
+
+  // Glassmorphism: a translucent lift off the dark surface color, with a
+  // faint light edge highlight rather than a dark border (reads as "glass"
+  // instead of just "a slightly different dark box").
+  static const Color glassSurface = Color(0xB3161B29);
+  static const Color glassSurfaceStrong = Color(0xE0161B29);
+  static const Color glassBorder = Color(0x26FFFFFF);
 }
 
 /// Centralized color palette for Baliwag EduConnect.
@@ -134,4 +147,13 @@ class AppColors {
   static List<Color> get accentGradient => [accent, accentDark];
 
   static Color get cardShadow => _dark ? _Dark.cardShadow : _Light.cardShadow;
+
+  static Color get glassSurface => _dark ? _Dark.glassSurface : _Light.glassSurface;
+  static Color get glassSurfaceStrong =>
+      _dark ? _Dark.glassSurfaceStrong : _Light.glassSurfaceStrong;
+  static Color get glassBorder => _dark ? _Dark.glassBorder : _Light.glassBorder;
+
+  /// Ambient ordered pair of glow colors (used behind glass panels as soft,
+  /// blurred color blobs) — primary hue + accent hue, tuned per mode.
+  static List<Color> get glowColors => [primary, accent];
 }

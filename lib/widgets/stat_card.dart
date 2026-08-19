@@ -24,9 +24,9 @@ class StatCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: AppColors.glassSurface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: AppColors.glassBorder),
         boxShadow: [
           BoxShadow(
             color: AppColors.cardShadow,
