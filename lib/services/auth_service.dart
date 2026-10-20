@@ -43,16 +43,17 @@ class AuthService {
     final cred = await _create(email, password);
     final user = cred.user!;
     await user.updateDisplayName(fullName);
-    await _users.doc(user.uid).set(
-          AppUser(
-            uid: user.uid,
-            email: email.trim(),
-            fullName: fullName.trim(),
-            role: UserRole.student,
-            studentNumber: studentNumber.trim(),
-            course: course.trim(),
-          ).toMap(),
-        );
+    await _saveProfile(
+      user.uid,
+      AppUser(
+        uid: user.uid,
+        email: email.trim(),
+        fullName: fullName.trim(),
+        role: UserRole.student,
+        studentNumber: studentNumber.trim(),
+        course: course.trim(),
+      ),
+    );
   }
 
   Future<void> registerAdmin({
@@ -67,14 +68,37 @@ class AuthService {
     final cred = await _create(email, password);
     final user = cred.user!;
     await user.updateDisplayName(fullName);
-    await _users.doc(user.uid).set(
-          AppUser(
-            uid: user.uid,
-            email: email.trim(),
-            fullName: fullName.trim(),
-            role: UserRole.admin,
-          ).toMap(),
-        );
+    await _saveProfile(
+      user.uid,
+      AppUser(
+        uid: user.uid,
+        email: email.trim(),
+        fullName: fullName.trim(),
+        role: UserRole.admin,
+      ),
+    );
+  }
+
+  Future<void> registerProvider({
+    required String email,
+    required String password,
+    required String organizationName,
+    required String contactName,
+  }) async {
+    final cred = await _create(email, password);
+    final user = cred.user!;
+    await user.updateDisplayName(contactName);
+    await _saveProfile(
+      user.uid,
+      AppUser(
+        uid: user.uid,
+        email: email.trim(),
+        fullName: contactName.trim(),
+        role: UserRole.provider,
+        organizationName: organizationName.trim(),
+        providerStatus: ProviderStatus.pending,
+      ),
+    );
   }
 
   Future<fb.UserCredential> _create(String email, String password) async {
@@ -85,6 +109,25 @@ class AuthService {
       );
     } on fb.FirebaseAuthException catch (e) {
       throw AuthException(_friendlyMessage(e));
+    }
+  }
+
+  /// Writes the just-created user's `users/{uid}` profile doc, surfacing a
+  /// specific [AuthException] on failure (e.g. a Firestore rules rejection)
+  /// instead of letting a bare [FirebaseException] fall through to
+  /// RegisterScreen's generic "Something went wrong" catch-all, which gave
+  /// no clue *why* — the Auth account exists at this point regardless of
+  /// whether this write succeeds (see AuthGate's `_OrphanedSession`, which
+  /// handles exactly that half-finished state on next sign-in).
+  Future<void> _saveProfile(String uid, AppUser profile) async {
+    try {
+      await _users.doc(uid).set(profile.toMap());
+    } on FirebaseException catch (e) {
+      throw AuthException(
+        'Account created, but saving your profile failed '
+        '(${e.code}: ${e.message}). Please try signing in — if that also '
+        "fails, contact the app's admin.",
+      );
     }
   }
 

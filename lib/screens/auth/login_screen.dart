@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
-import '../../theme/app_colors.dart';
+import '../../theme/app_theme_context.dart';
 import '../../widgets/ambient_background.dart';
 import '../../widgets/glass_panel.dart';
 import 'register_screen.dart';
@@ -66,14 +66,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     height: 64,
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
-                        colors: AppColors.heroGradient,
+                        colors: context.appColors.heroGradient,
                         begin: Alignment.topLeft,
                         end: Alignment.bottomRight,
                       ),
                       borderRadius: BorderRadius.circular(18),
                       boxShadow: [
                         BoxShadow(
-                          color: AppColors.primary.withValues(alpha: 0.45),
+                          color: context.scheme.primary.withValues(alpha: 0.45),
                           blurRadius: 28,
                           offset: const Offset(0, 10),
                         ),
@@ -91,7 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
+                      color: context.appColors.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -99,7 +99,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     'Sign in to continue',
                     style: TextStyle(
                       fontSize: 13,
-                      color: AppColors.textSecondary,
+                      color: context.appColors.textSecondary,
                     ),
                   ),
                   const SizedBox(height: 28),
@@ -115,7 +115,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: AppColors.dangerBg,
+                                color: context.appColors.dangerBg,
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: Row(
@@ -123,7 +123,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                   Icon(
                                     Icons.error_rounded,
                                     size: 18,
-                                    color: AppColors.danger,
+                                    color: context.scheme.error,
                                   ),
                                   const SizedBox(width: 8),
                                   Expanded(
@@ -131,7 +131,7 @@ class _LoginScreenState extends State<LoginScreen> {
                                       _error!,
                                       style: TextStyle(
                                         fontSize: 12.5,
-                                        color: AppColors.danger,
+                                        color: context.scheme.error,
                                       ),
                                     ),
                                   ),
@@ -181,7 +181,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               borderRadius: BorderRadius.circular(14),
                               boxShadow: [
                                 BoxShadow(
-                                  color: AppColors.primary.withValues(alpha: 0.4),
+                                  color: context.scheme.primary.withValues(
+                                    alpha: 0.4,
+                                  ),
                                   blurRadius: 22,
                                   offset: const Offset(0, 8),
                                 ),
@@ -190,8 +192,10 @@ class _LoginScreenState extends State<LoginScreen> {
                             child: FilledButton(
                               onPressed: _loading ? null : _submit,
                               style: FilledButton.styleFrom(
-                                backgroundColor: AppColors.primary,
-                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                backgroundColor: context.scheme.primary,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
                               ),
                               child: _loading
                                   ? const SizedBox(

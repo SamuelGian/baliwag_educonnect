@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../theme/app_colors.dart';
+import '../theme/app_theme_context.dart';
 
 class SectionHeader extends StatelessWidget {
   final String title;
@@ -26,19 +26,23 @@ class SectionHeader extends StatelessWidget {
             children: [
               Text(
                 title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
-                  color: AppColors.textPrimary,
+                  color: context.appColors.textPrimary,
                 ),
               ),
               if (subtitle != null) ...[
                 const SizedBox(height: 2),
                 Text(
                   subtitle!,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 12.5,
-                    color: AppColors.textSecondary,
+                    color: context.appColors.textSecondary,
                   ),
                 ),
               ],

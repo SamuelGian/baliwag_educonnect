@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/application.dart';
-import '../theme/app_colors.dart';
+import '../theme/app_theme_context.dart';
 
 /// Visualizes the OCR document-vs-record match status produced by
 /// AppState._verifyDocuments (see lib/services/ocr_service.dart).
@@ -23,8 +23,8 @@ class DocMatchBadge extends StatelessWidget {
         return _badge(
           icon: Icons.upload_file_rounded,
           label: 'Not uploaded',
-          color: AppColors.textMuted,
-          bg: AppColors.neutralBg,
+          color: context.appColors.textMuted,
+          bg: context.appColors.neutralBg,
         );
       case DocMatchStatus.verifying:
         return Row(
@@ -35,7 +35,7 @@ class DocMatchBadge extends StatelessWidget {
               height: 12,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: AppColors.info,
+                color: context.appColors.info,
               ),
             ),
             const SizedBox(width: 6),
@@ -47,7 +47,7 @@ class DocMatchBadge extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.info,
+                  color: context.appColors.info,
                 ),
               ),
             ),
@@ -57,15 +57,22 @@ class DocMatchBadge extends StatelessWidget {
         return _badge(
           icon: Icons.verified_rounded,
           label: 'Matched with student record',
-          color: AppColors.success,
-          bg: AppColors.successBg,
+          color: context.appColors.success,
+          bg: context.appColors.successBg,
         );
       case DocMatchStatus.mismatch:
         return _badge(
           icon: Icons.error_rounded,
           label: 'Needs manual review',
-          color: AppColors.danger,
-          bg: AppColors.dangerBg,
+          color: context.scheme.error,
+          bg: context.appColors.dangerBg,
+        );
+      case DocMatchStatus.needsResubmission:
+        return _badge(
+          icon: Icons.replay_rounded,
+          label: 'Resubmission required',
+          color: context.scheme.error,
+          bg: context.appColors.dangerBg,
         );
     }
   }
@@ -78,7 +85,10 @@ class DocMatchBadge extends StatelessWidget {
   }) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-      decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(30)),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(30),
+      ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
@@ -89,7 +99,11 @@ class DocMatchBadge extends StatelessWidget {
               label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600, color: color),
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                color: color,
+              ),
             ),
           ),
         ],

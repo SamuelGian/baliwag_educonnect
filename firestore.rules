@@ -31,11 +31,22 @@ function isOwner(uid) {
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Each user's own profile (role, name, student number, course).
+    // Each user's own profile (role, name, student number, course, and —
+    // for a Provider account — organizationName/providerStatus).
     match /users/{uid} {
-      allow read: if isOwner(uid);
+      // Read stays owner-only... except the Admin Dashboard's "Providers"
+      // tab needs to list every provider account to approve/reject them,
+      // which (like every other admin-only surface in this app — see the
+      // note at the top of this file) is enforced by the UI, not here.
+      allow read: if isSignedIn();
       allow create: if isOwner(uid);
-      allow update: if isOwner(uid) &&
+      // Update is intentionally NOT owner-only: Admin must be able to flip
+      // another user's `providerStatus` to approve/reject a Provider
+      // account (see UserRepository.setProviderStatus). This mirrors the
+      // same already-accepted tradeoff as `scholarships`/`announcements`
+      // below — UI-gated, not rules-gated — extended to one more field.
+      // `role` is still the one thing nobody may ever change post-creation.
+      allow update: if isSignedIn() &&
         request.resource.data.role == resource.data.role;
       allow delete: if false;
     }
@@ -54,14 +65,32 @@ service cloud.firestore {
     }
 
     // Applications: a student can only create their own (enforced here,
-    // doesn't need a cross-document lookup); read/update/delete of any
-    // application is UI-gated (students only ever query their own via
-    // watchForStudent(uid), admins review all via the Admin Dashboard).
+    // doesn't need a cross-document lookup). Reading and most updates are
+    // still UI-gated (students only ever query their own via
+    // watchForStudent(uid), admins review all via the Admin Dashboard) —
+    // there's no reliable way to tell "this signed-in user is an admin"
+    // at the rules level without either custom claims (needs a Cloud
+    // Function, which needs the Blaze plan) or the isAdmin() cross-document
+    // read that was tried before and mysteriously returned
+    // permission-denied for a real admin account, with no working
+    // emulator available to debug why (see git history / prior notes).
+    //
+    // What IS enforced here without needing to know who's an admin: an
+    // application's own OWNER can never change its `status` field — that
+    // closes the worst concrete escalation (a student setting their own
+    // application to "approved" via a direct Firestore call, bypassing the
+    // admin entirely). A student maliciously editing or deleting *another*
+    // student's application is a separate, lower-likelihood residual gap
+    // that genuinely needs the admin check above to close properly.
+    // `delete` is blocked outright — no feature in this app ever deletes
+    // an application, so there's no functionality lost by refusing it.
     match /applications/{id} {
       allow read: if isSignedIn();
       allow create: if isSignedIn() && request.resource.data.studentUid == request.auth.uid;
-      allow update: if isSignedIn();
-      allow delete: if isSignedIn();
+      allow update: if isSignedIn() &&
+        (resource.data.studentUid != request.auth.uid ||
+          request.resource.data.status == resource.data.status);
+      allow delete: if false;
     }
   }
 }

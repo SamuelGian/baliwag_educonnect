@@ -16,6 +16,14 @@ class ScholarshipRepository {
         );
   }
 
+  /// Only the signed-in provider's own programs (Provider dashboard).
+  Stream<List<Scholarship>> watchForProvider(String providerUid) {
+    return _col.where('providerUid', isEqualTo: providerUid).snapshots().map(
+          (snap) => snap.docs.map((d) => Scholarship.fromMap(d.id, d.data())).toList()
+            ..sort((a, b) => a.deadline.compareTo(b.deadline)),
+        );
+  }
+
   /// Create.
   Future<String> create(Scholarship draft) async {
     final ref = _col.doc();

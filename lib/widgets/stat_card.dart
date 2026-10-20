@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import '../theme/app_colors.dart';
+import '../theme/app_theme_context.dart';
 
 class StatCard extends StatelessWidget {
   final String label;
@@ -24,12 +24,12 @@ class StatCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
-        color: AppColors.glassSurface,
+        color: context.appColors.glassSurface,
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.glassBorder),
+        border: Border.all(color: context.appColors.glassBorder),
         boxShadow: [
           BoxShadow(
-            color: AppColors.cardShadow,
+            color: context.appColors.cardShadow,
             blurRadius: 14,
             offset: const Offset(0, 6),
           ),
@@ -57,14 +57,18 @@ class StatCard extends StatelessWidget {
                           ? Icons.arrow_upward_rounded
                           : Icons.arrow_downward_rounded,
                       size: 14,
-                      color: trendUp ? AppColors.success : AppColors.danger,
+                      color: trendUp
+                          ? context.appColors.success
+                          : context.scheme.error,
                     ),
                     Text(
                       trend!,
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: trendUp ? AppColors.success : AppColors.danger,
+                        color: trendUp
+                            ? context.appColors.success
+                            : context.scheme.error,
                       ),
                     ),
                   ],
@@ -79,7 +83,7 @@ class StatCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 24,
               fontWeight: FontWeight.w700,
-              color: AppColors.textPrimary,
+              color: context.appColors.textPrimary,
             ),
           ),
           const SizedBox(height: 2),
@@ -87,7 +91,10 @@ class StatCard extends StatelessWidget {
             label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+            style: TextStyle(
+              fontSize: 12.5,
+              color: context.appColors.textSecondary,
+            ),
           ),
         ],
       ),

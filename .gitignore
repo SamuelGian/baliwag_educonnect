@@ -43,6 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+/android/build/
 
 # Local secrets (OCR API key, etc.) - never commit
 lib/config/secrets.dart

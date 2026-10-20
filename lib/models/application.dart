@@ -78,12 +78,10 @@ extension ApplicationStatusX on ApplicationStatus {
   }
 }
 
-enum DocMatchStatus { pending, verifying, matched, mismatch }
+enum DocMatchStatus { pending, verifying, matched, mismatch, needsResubmission }
 
-DocMatchStatus docMatchStatusFromName(String? name) => DocMatchStatus.values.firstWhere(
-      (s) => s.name == name,
-      orElse: () => DocMatchStatus.pending,
-    );
+DocMatchStatus docMatchStatusFromName(String? name) => DocMatchStatus.values
+    .firstWhere((s) => s.name == name, orElse: () => DocMatchStatus.pending);
 
 class DocumentItem {
   final String name;
@@ -91,20 +89,30 @@ class DocumentItem {
   String? fileName;
   Uint8List? bytes;
 
-  /// Download URL of the uploaded file in Firebase Storage. Populated once
-  /// the file has actually been uploaded (not before).
-  String? storageUrl;
+  /// Object path of the uploaded file in the Supabase Storage `documents`
+  /// bucket (not a URL — the bucket is private, so a viewer must mint a
+  /// fresh signed URL from this path on demand; see
+  /// SupabaseStorageService.createSignedUrl). Null for documents uploaded
+  /// before this feature existed, or if the storage upload failed.
+  String? storagePath;
   DocMatchStatus matchStatus;
   String? matchNote;
+
+  /// Set by an admin (via "Request resubmission" in the Review dialog) to
+  /// explain what's wrong with this specific document — distinct from
+  /// [matchNote], which is the OCR pipeline's own automated note. Cleared
+  /// automatically once the student uploads a replacement file.
+  String? adminFeedback;
 
   DocumentItem({
     required this.name,
     this.uploaded = false,
     this.fileName,
     this.bytes,
-    this.storageUrl,
+    this.storagePath,
     this.matchStatus = DocMatchStatus.pending,
     this.matchNote,
+    this.adminFeedback,
   });
 
   factory DocumentItem.fromMap(Map<String, dynamic> data) {
@@ -112,9 +120,10 @@ class DocumentItem {
       name: data['name'] as String? ?? '',
       uploaded: data['uploaded'] as bool? ?? false,
       fileName: data['fileName'] as String?,
-      storageUrl: data['storageUrl'] as String?,
+      storagePath: data['storagePath'] as String?,
       matchStatus: docMatchStatusFromName(data['matchStatus'] as String?),
       matchNote: data['matchNote'] as String?,
+      adminFeedback: data['adminFeedback'] as String?,
     );
   }
 
@@ -123,9 +132,10 @@ class DocumentItem {
       'name': name,
       'uploaded': uploaded,
       'fileName': fileName,
-      'storageUrl': storageUrl,
+      'storagePath': storagePath,
       'matchStatus': matchStatus.name,
       'matchNote': matchNote,
+      'adminFeedback': adminFeedback,
     };
   }
 }
@@ -160,7 +170,24 @@ class AdminMessage {
 
 class ScholarshipApplication {
   final String id;
+
+  /// Stable reference to the `scholarships/{id}` document this application
+  /// is for. Added alongside [scholarshipTitle] (kept as a display
+  /// snapshot) because matching on title alone breaks the moment an admin
+  /// renames a scholarship, or if two programs ever share a title —
+  /// duplicate-application checks and slot bookkeeping both need something
+  /// that can't drift. Empty string for applications created before this
+  /// field existed; those fall back to title-matching (see
+  /// AppState.blockReasonFor).
+  final String scholarshipId;
   final String scholarshipTitle;
+
+  /// Snapshot of the owning [Scholarship.providerUid] at submission time —
+  /// same reasoning as [scholarshipTitle] above: lets a provider's
+  /// "Applications" view query `where('providerUid', ==, uid)` directly
+  /// instead of an unbounded `whereIn` over all of their scholarship ids.
+  /// Empty for applications to an Admin-created scholarship.
+  final String providerUid;
   final String studentUid;
   final String studentName;
   final String studentNumber;
@@ -175,7 +202,9 @@ class ScholarshipApplication {
 
   ScholarshipApplication({
     required this.id,
+    this.scholarshipId = '',
     required this.scholarshipTitle,
+    this.providerUid = '',
     required this.studentUid,
     required this.studentName,
     required this.studentNumber,
@@ -192,18 +221,29 @@ class ScholarshipApplication {
   factory ScholarshipApplication.fromMap(String id, Map<String, dynamic> data) {
     return ScholarshipApplication(
       id: id,
+      scholarshipId: data['scholarshipId'] as String? ?? '',
       scholarshipTitle: data['scholarshipTitle'] as String? ?? '',
+      providerUid: data['providerUid'] as String? ?? '',
       studentUid: data['studentUid'] as String? ?? '',
       studentName: data['studentName'] as String? ?? '',
       studentNumber: data['studentNumber'] as String? ?? '',
-      dateSubmitted: (data['dateSubmitted'] as Timestamp?)?.toDate() ?? DateTime.now(),
+      dateSubmitted:
+          (data['dateSubmitted'] as Timestamp?)?.toDate() ?? DateTime.now(),
       status: applicationStatusFromName(data['status'] as String?),
-      documents: (data['documents'] as List<dynamic>?)
-              ?.map((e) => DocumentItem.fromMap(Map<String, dynamic>.from(e as Map)))
+      documents:
+          (data['documents'] as List<dynamic>?)
+              ?.map(
+                (e) =>
+                    DocumentItem.fromMap(Map<String, dynamic>.from(e as Map)),
+              )
               .toList() ??
           [],
-      messages: (data['messages'] as List<dynamic>?)
-              ?.map((e) => AdminMessage.fromMap(Map<String, dynamic>.from(e as Map)))
+      messages:
+          (data['messages'] as List<dynamic>?)
+              ?.map(
+                (e) =>
+                    AdminMessage.fromMap(Map<String, dynamic>.from(e as Map)),
+              )
               .toList() ??
           [],
       applicantFullName: data['applicantFullName'] as String?,
@@ -212,7 +252,9 @@ class ScholarshipApplication {
 
   Map<String, dynamic> toMap() {
     return {
+      'scholarshipId': scholarshipId,
       'scholarshipTitle': scholarshipTitle,
+      'providerUid': providerUid,
       'studentUid': studentUid,
       'studentName': studentName,
       'studentNumber': studentNumber,

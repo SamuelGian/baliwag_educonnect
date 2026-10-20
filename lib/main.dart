@@ -31,13 +31,14 @@ class BaliwagEduConnectApp extends StatelessWidget {
             title: 'Baliwag EduConnect',
             debugShowCheckedModeBanner: false,
             theme: theme.isDarkMode ? AppTheme.dark : AppTheme.light,
-            // Keyed on mode so every screen remounts and re-reads the
-            // now-updated AppColors values (they're plain static getters,
-            // not InheritedWidget-driven, so a fresh build is required).
-            home: KeyedSubtree(
-              key: ValueKey(theme.isDarkMode),
-              child: const AuthGate(),
-            ),
+            // No key here on purpose — forcing a remount on every toggle
+            // (via a ValueKey on isDarkMode) used to tear down and recreate
+            // this entire subtree, wiping whatever screen/tab the user was
+            // on. Widgets read colors through context.scheme/context.
+            // appColors (Theme-dependent) or alongside one in the same
+            // build, so the normal Theme change already repaints them
+            // in place without losing navigation state.
+            home: const AuthGate(),
           );
         },
       ),

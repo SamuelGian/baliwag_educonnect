@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
 import '../models/app_user.dart';
-import '../theme/app_colors.dart';
+import '../theme/app_theme_context.dart';
+import '../theme/breakpoints.dart';
+import '../widgets/account_settings_rows.dart';
 import '../widgets/ambient_background.dart';
 import '../widgets/glass_panel.dart';
 
@@ -111,7 +113,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
     if (!_initialized) _loadFrom(app.user);
-    final wide = MediaQuery.of(context).size.width >= 900;
+    final wide = MediaQuery.of(context).size.width >= kDesktopBreakpoint;
     final narrow = MediaQuery.of(context).size.width < 480;
     final initials = _fullName.text
         .trim()
@@ -126,9 +128,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
     return AmbientBackground(
       child: SafeArea(
         child: SingleChildScrollView(
-          padding: EdgeInsets.symmetric(
-            horizontal: wide ? 32 : 18,
-            vertical: 24,
+          // Extra bottom clearance on narrow screens only, so the Account
+          // section (dark mode / Log Out) can scroll clear of the floating
+          // GlassNavBar instead of ending up hidden under it.
+          padding: EdgeInsets.fromLTRB(
+            wide ? 32 : 18,
+            24,
+            wide ? 32 : 18,
+            wide ? 24 : 120,
           ),
           child: Center(
             child: ConstrainedBox(
@@ -141,7 +148,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     style: TextStyle(
                       fontSize: 22,
                       fontWeight: FontWeight.w700,
-                      color: AppColors.textPrimary,
+                      color: context.appColors.textPrimary,
                     ),
                   ),
                   const SizedBox(height: 4),
@@ -149,7 +156,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                     'Save your details once and use "Auto-fill from Profile" on the Apply form instead of retyping them every time.',
                     style: TextStyle(
                       fontSize: 13,
-                      color: AppColors.textSecondary,
+                      color: context.appColors.textSecondary,
                     ),
                   ),
                   const SizedBox(height: 22),
@@ -165,14 +172,16 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                           height: 60,
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
-                              colors: AppColors.heroGradient,
+                              colors: context.appColors.heroGradient,
                               begin: Alignment.topLeft,
                               end: Alignment.bottomRight,
                             ),
                             shape: BoxShape.circle,
                             boxShadow: [
                               BoxShadow(
-                                color: AppColors.primary.withValues(alpha: 0.4),
+                                color: context.scheme.primary.withValues(
+                                  alpha: 0.4,
+                                ),
                                 blurRadius: 22,
                                 offset: const Offset(0, 8),
                               ),
@@ -209,7 +218,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                                 app.user.email,
                                 style: TextStyle(
                                   fontSize: 12,
-                                  color: AppColors.textSecondary,
+                                  color: context.appColors.textSecondary,
                                 ),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -223,11 +232,12 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                                       child: LinearProgressIndicator(
                                         value: completeness,
                                         minHeight: 6,
-                                        backgroundColor: AppColors.neutralBg,
+                                        backgroundColor:
+                                            context.appColors.neutralBg,
                                         valueColor: AlwaysStoppedAnimation(
                                           completeness >= 1
-                                              ? AppColors.success
-                                              : AppColors.accent,
+                                              ? context.appColors.success
+                                              : context.scheme.secondary,
                                         ),
                                       ),
                                     ),
@@ -238,7 +248,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                                     style: TextStyle(
                                       fontSize: 11.5,
                                       fontWeight: FontWeight.w700,
-                                      color: AppColors.textSecondary,
+                                      color: context.appColors.textSecondary,
                                     ),
                                   ),
                                 ],
@@ -274,7 +284,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                             hint: 'e.g. BS Information Technology - 3rd Year',
                           ),
                           const SizedBox(height: 8),
-                          Divider(color: AppColors.border),
+                          Divider(color: context.appColors.border),
                           const SizedBox(height: 16),
                           _sectionLabel(
                             Icons.contact_phone_outlined,
@@ -295,7 +305,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                           Container(
                             padding: const EdgeInsets.all(12),
                             decoration: BoxDecoration(
-                              color: AppColors.infoBg,
+                              color: context.appColors.infoBg,
                               borderRadius: BorderRadius.circular(12),
                             ),
                             child: Row(
@@ -304,7 +314,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                                 Icon(
                                   Icons.info_rounded,
                                   size: 16,
-                                  color: AppColors.info,
+                                  color: context.appColors.info,
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
@@ -314,7 +324,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                                     'in directly on the Apply form.',
                                     style: TextStyle(
                                       fontSize: 11.5,
-                                      color: AppColors.info,
+                                      color: context.appColors.info,
                                     ),
                                   ),
                                 ),
@@ -329,7 +339,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                                 borderRadius: BorderRadius.circular(14),
                                 boxShadow: [
                                   BoxShadow(
-                                    color: AppColors.primary.withValues(
+                                    color: context.scheme.primary.withValues(
                                       alpha: 0.4,
                                     ),
                                     blurRadius: 20,
@@ -340,7 +350,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                               child: FilledButton(
                                 onPressed: _saving ? null : _save,
                                 style: FilledButton.styleFrom(
-                                  backgroundColor: AppColors.primary,
+                                  backgroundColor: context.scheme.primary,
                                   padding: const EdgeInsets.symmetric(
                                     horizontal: 28,
                                     vertical: 16,
@@ -363,6 +373,25 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
                       ),
                     ),
                   ),
+                  const SizedBox(height: 18),
+
+                  // --- Account: dark mode + sign out ------------------------
+                  GlassPanel(
+                    padding: const EdgeInsets.all(22),
+                    strong: true,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _sectionLabel(Icons.settings_outlined, 'Account'),
+                        const SizedBox(height: 14),
+                        const DarkModeRow(),
+                        const SizedBox(height: 10),
+                        Divider(color: context.appColors.border),
+                        const SizedBox(height: 10),
+                        const LogoutRow(),
+                      ],
+                    ),
+                  ),
                 ],
               ),
             ),
@@ -375,14 +404,14 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   Widget _sectionLabel(IconData icon, String label) {
     return Row(
       children: [
-        Icon(icon, size: 16, color: AppColors.primary),
+        Icon(icon, size: 16, color: context.scheme.primary),
         const SizedBox(width: 8),
         Text(
           label,
           style: TextStyle(
             fontSize: 13,
             fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
+            color: context.appColors.textPrimary,
           ),
         ),
       ],

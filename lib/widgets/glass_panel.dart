@@ -1,6 +1,6 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
-import '../theme/app_colors.dart';
+import '../theme/app_theme_context.dart';
 
 /// A frosted-glass panel: real backdrop blur + a translucent tint + a faint
 /// light edge highlight, so content behind it (an [AmbientBackground], a
@@ -32,12 +32,17 @@ class GlassPanel extends StatelessWidget {
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
-            color: strong ? AppColors.glassSurfaceStrong : AppColors.glassSurface,
+            color: strong
+                ? context.appColors.glassSurfaceStrong
+                : context.appColors.glassSurface,
             borderRadius: borderRadius,
-            border: Border.all(color: AppColors.glassBorder, width: 1.2),
+            border: Border.all(
+              color: context.appColors.glassBorder,
+              width: 1.2,
+            ),
             boxShadow: [
               BoxShadow(
-                color: AppColors.cardShadow,
+                color: context.appColors.cardShadow,
                 blurRadius: 32,
                 offset: const Offset(0, 16),
               ),

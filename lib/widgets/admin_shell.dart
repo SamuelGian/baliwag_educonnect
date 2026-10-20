@@ -2,38 +2,40 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
 import '../screens/admin_dashboard_screen.dart';
-import '../services/auth_service.dart';
-import '../theme/app_colors.dart';
+import '../screens/admin_settings_screen.dart';
+import '../theme/app_theme_context.dart';
+import '../theme/breakpoints.dart';
 import '../theme/theme_controller.dart';
 import '../widgets/ambient_background.dart';
-
-class _NavDestinationSpec {
-  final String label;
-  final IconData icon;
-  final IconData selectedIcon;
-
-  const _NavDestinationSpec({
-    required this.label,
-    required this.icon,
-    required this.selectedIcon,
-  });
-}
+import 'glass_nav_bar.dart';
+import 'logout_confirm_dialog.dart';
+import 'nav_destination_spec.dart';
 
 const _destinations = [
-  _NavDestinationSpec(
+  NavDestinationSpec(
     label: 'Applications',
     icon: Icons.fact_check_outlined,
     selectedIcon: Icons.fact_check_rounded,
   ),
-  _NavDestinationSpec(
+  NavDestinationSpec(
     label: 'Scholarships',
     icon: Icons.school_outlined,
     selectedIcon: Icons.school_rounded,
   ),
-  _NavDestinationSpec(
+  NavDestinationSpec(
     label: 'Announcements',
     icon: Icons.campaign_outlined,
     selectedIcon: Icons.campaign_rounded,
+  ),
+  NavDestinationSpec(
+    label: 'Providers',
+    icon: Icons.corporate_fare_outlined,
+    selectedIcon: Icons.corporate_fare_rounded,
+  ),
+  NavDestinationSpec(
+    label: 'Settings',
+    icon: Icons.settings_outlined,
+    selectedIcon: Icons.settings_rounded,
   ),
 ];
 
@@ -58,6 +60,8 @@ class _AdminShellState extends State<AdminShell> {
     ApplicationsTab(),
     ScholarshipsTab(),
     AnnouncementsTab(),
+    ProvidersTab(),
+    AdminSettingsScreen(),
   ];
 
   void _goTo(int index) => setState(() => _index = index);
@@ -65,7 +69,14 @@ class _AdminShellState extends State<AdminShell> {
   @override
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
-    final wide = width >= 900;
+    final wide = width >= kDesktopBreakpoint;
+    // A fixed 240px labeled rail plus content left too little room for the
+    // content itself between 600-840px total width — exactly what was
+    // squeezing card text down to ellipsis. Auto-collapsing to an
+    // icon-only rail there instead frees up real space, on top of (not
+    // instead of) the applicant card's own responsive reflow.
+    final railMini = wide && width < kFullSidebarMinWidth;
+    final railWidth = railMini ? kMiniSidebarWidth : kSidebarWidth;
 
     final body = AmbientBackground(
       child: IndexedStack(index: _index, children: _screens),
@@ -80,14 +91,15 @@ class _AdminShellState extends State<AdminShell> {
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 220),
                   curve: Curves.easeInOut,
-                  width: _railCollapsed ? 0 : 240,
+                  width: _railCollapsed ? 0 : railWidth,
                   child: ClipRect(
                     child: OverflowBox(
                       alignment: Alignment.centerLeft,
-                      minWidth: 240,
-                      maxWidth: 240,
+                      minWidth: railWidth,
+                      maxWidth: railWidth,
                       child: _AdminSideRail(
                         index: _index,
+                        mini: railMini,
                         onSelect: _goTo,
                         onCollapse: () => setState(() => _railCollapsed = true),
                       ),
@@ -95,7 +107,7 @@ class _AdminShellState extends State<AdminShell> {
                   ),
                 ),
                 if (!_railCollapsed)
-                  VerticalDivider(width: 1, color: AppColors.border),
+                  VerticalDivider(width: 1, color: context.appColors.border),
                 Expanded(child: body),
               ],
             ),
@@ -133,51 +145,27 @@ class _AdminShellState extends State<AdminShell> {
       );
     }
 
+    // Floats over the page in a Stack (not Scaffold.bottomNavigationBar) so
+    // the frosted-glass blur has real, scrolling content behind it. `body`
+    // fills the full Stack, unpadded — see the matching comment in
+    // AppShell for why padding it here exposes a solid background box
+    // instead of page content.
+    final bottomInset = MediaQuery.of(context).padding.bottom;
     return Scaffold(
-      body: body,
-      bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: AppColors.glassSurfaceStrong,
-          boxShadow: [
-            BoxShadow(color: AppColors.cardShadow, blurRadius: 20, offset: const Offset(0, -6)),
-          ],
-        ),
-        child: SafeArea(
-          top: false,
-          child: SizedBox(
-            height: 80,
-            child: Row(
-              children: [
-                Expanded(
-                  child: NavigationBar(
-                    selectedIndex: _index,
-                    onDestinationSelected: _goTo,
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    labelBehavior: width < 380
-                        ? NavigationDestinationLabelBehavior.onlyShowSelected
-                        : NavigationDestinationLabelBehavior.alwaysShow,
-                    destinations: [
-                      for (final d in _destinations)
-                        NavigationDestination(
-                          key: ValueKey('admin-nav-${d.label}'),
-                          icon: Icon(d.icon),
-                          selectedIcon: Icon(d.selectedIcon),
-                          label: d.label,
-                        ),
-                    ],
-                  ),
-                ),
-                SizedBox(
-                  height: 36,
-                  child: VerticalDivider(width: 1, color: AppColors.border),
-                ),
-                const _BottomBarDarkModeToggle(),
-                const _BottomBarLogoutButton(),
-              ],
+      body: Stack(
+        children: [
+          body,
+          Positioned(
+            left: 20,
+            right: 20,
+            bottom: 20 + bottomInset,
+            child: GlassNavBar(
+              index: _index,
+              onSelect: _goTo,
+              destinations: _destinations,
             ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -203,10 +191,14 @@ class _RoundIconButton extends StatelessWidget {
         height: 40,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
-          color: AppColors.surface,
-          border: Border.all(color: AppColors.border),
+          color: context.scheme.surface,
+          border: Border.all(color: context.appColors.border),
           boxShadow: [
-            BoxShadow(color: AppColors.cardShadow, blurRadius: 10, offset: const Offset(0, 3)),
+            BoxShadow(
+              color: context.appColors.cardShadow,
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
           ],
         ),
         child: ClipOval(
@@ -214,7 +206,11 @@ class _RoundIconButton extends StatelessWidget {
             type: MaterialType.transparency,
             child: InkWell(
               onTap: onTap,
-              child: Icon(icon, size: 20, color: AppColors.textSecondary),
+              child: Icon(
+                icon,
+                size: 20,
+                color: context.appColors.textSecondary,
+              ),
             ),
           ),
         ),
@@ -223,47 +219,43 @@ class _RoundIconButton extends StatelessWidget {
   }
 }
 
-class _BottomBarDarkModeToggle extends StatelessWidget {
-  const _BottomBarDarkModeToggle();
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = context.watch<ThemeController>();
-    return IconButton(
-      tooltip: theme.isDarkMode ? 'Switch to light mode' : 'Switch to dark mode',
-      icon: Icon(
-        theme.isDarkMode ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-        color: AppColors.textMuted,
-      ),
-      onPressed: theme.toggleDarkMode,
-    );
-  }
-}
-
-class _BottomBarLogoutButton extends StatelessWidget {
-  const _BottomBarLogoutButton();
-
-  @override
-  Widget build(BuildContext context) {
-    return IconButton(
-      tooltip: 'Log out',
-      icon: Icon(Icons.logout_rounded, color: AppColors.textMuted),
-      onPressed: () => context.read<AuthService>().signOut(),
-    );
-  }
-}
-
 class _RailDarkModeToggle extends StatelessWidget {
-  const _RailDarkModeToggle();
+  final bool mini;
+
+  const _RailDarkModeToggle({required this.mini});
 
   @override
   Widget build(BuildContext context) {
     final theme = context.watch<ThemeController>();
     final isDark = theme.isDarkMode;
+    final icon = Icon(
+      isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+      size: 18,
+      color: context.appColors.textMuted,
+    );
+
+    if (mini) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
+        child: Tooltip(
+          message: isDark ? 'Light mode' : 'Dark mode',
+          child: Material(
+            color: context.appColors.neutralBg,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: theme.toggleDarkMode,
+              child: Padding(padding: const EdgeInsets.all(12), child: icon),
+            ),
+          ),
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
       child: Material(
-        color: AppColors.neutralBg,
+        color: context.appColors.neutralBg,
         borderRadius: BorderRadius.circular(12),
         child: InkWell(
           borderRadius: BorderRadius.circular(12),
@@ -272,18 +264,14 @@ class _RailDarkModeToggle extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             child: Row(
               children: [
-                Icon(
-                  isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-                  size: 18,
-                  color: AppColors.textMuted,
-                ),
+                icon,
                 const SizedBox(width: 12),
                 Text(
                   isDark ? 'Light mode' : 'Dark mode',
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w500,
-                    color: AppColors.textSecondary,
+                    color: context.appColors.textSecondary,
                   ),
                 ),
               ],
@@ -297,23 +285,134 @@ class _RailDarkModeToggle extends StatelessWidget {
 
 class _AdminSideRail extends StatelessWidget {
   final int index;
+  final bool mini;
   final ValueChanged<int> onSelect;
   final VoidCallback onCollapse;
 
   const _AdminSideRail({
     required this.index,
+    required this.mini,
     required this.onSelect,
     required this.onCollapse,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 240,
+    final logo = Container(
+      width: 38,
+      height: 38,
       decoration: BoxDecoration(
-        color: AppColors.glassSurfaceStrong,
+        gradient: LinearGradient(
+          colors: context.appColors.heroGradient,
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(11),
         boxShadow: [
-          BoxShadow(color: AppColors.cardShadow, blurRadius: 24, offset: const Offset(6, 0)),
+          BoxShadow(
+            color: context.scheme.primary.withValues(alpha: 0.4),
+            blurRadius: 16,
+            offset: const Offset(0, 6),
+          ),
+        ],
+      ),
+      child: const Icon(
+        Icons.admin_panel_settings_rounded,
+        color: Colors.white,
+        size: 20,
+      ),
+    );
+
+    final header = mini
+        ? Column(
+            children: [
+              logo,
+              const SizedBox(height: 10),
+              Tooltip(
+                message: 'Hide sidebar',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: onCollapse,
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.menu_open_rounded,
+                      size: 16,
+                      color: context.appColors.textMuted,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          )
+        : Row(
+            children: [
+              logo,
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Baliwag\nEduConnect',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w700,
+                        height: 1.15,
+                        color: context.appColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 7,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: context.scheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        'ADMIN',
+                        style: TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: context.scheme.primary,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Tooltip(
+                message: 'Hide sidebar',
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: onCollapse,
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Icon(
+                      Icons.menu_open_rounded,
+                      size: 18,
+                      color: context.appColors.textMuted,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          );
+
+    return Container(
+      width: mini ? kMiniSidebarWidth : kSidebarWidth,
+      decoration: BoxDecoration(
+        color: context.appColors.glassSurfaceStrong,
+        boxShadow: [
+          BoxShadow(
+            color: context.appColors.cardShadow,
+            blurRadius: 24,
+            offset: const Offset(6, 0),
+          ),
         ],
       ),
       child: Column(
@@ -321,80 +420,8 @@ class _AdminSideRail extends StatelessWidget {
         children: [
           const SizedBox(height: 28),
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 22),
-            child: Row(
-              children: [
-                Container(
-                  width: 38,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: AppColors.heroGradient,
-                      begin: Alignment.topLeft,
-                      end: Alignment.bottomRight,
-                    ),
-                    borderRadius: BorderRadius.circular(11),
-                    boxShadow: [
-                      BoxShadow(
-                        color: AppColors.primary.withValues(alpha: 0.4),
-                        blurRadius: 16,
-                        offset: const Offset(0, 6),
-                      ),
-                    ],
-                  ),
-                  child: const Icon(
-                    Icons.admin_panel_settings_rounded,
-                    color: Colors.white,
-                    size: 20,
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Baliwag\nEduConnect',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w700,
-                          height: 1.15,
-                          color: AppColors.textPrimary,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.12),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          'ADMIN',
-                          style: TextStyle(
-                            fontSize: 9,
-                            fontWeight: FontWeight.w700,
-                            letterSpacing: 0.5,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                Tooltip(
-                  message: 'Hide sidebar',
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(8),
-                    onTap: onCollapse,
-                    child: Padding(
-                      padding: const EdgeInsets.all(4),
-                      child: Icon(Icons.menu_open_rounded, size: 18, color: AppColors.textMuted),
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            padding: EdgeInsets.symmetric(horizontal: mini ? 10 : 22),
+            child: header,
           ),
           const SizedBox(height: 32),
           for (int i = 0; i < _destinations.length; i++)
@@ -402,11 +429,12 @@ class _AdminSideRail extends StatelessWidget {
               key: ValueKey('admin-nav-${_destinations[i].label}'),
               spec: _destinations[i],
               selected: i == index,
+              mini: mini,
               onTap: () => onSelect(i),
             ),
           const Spacer(),
-          const _RailDarkModeToggle(),
-          const _RailAccountCard(),
+          _RailDarkModeToggle(mini: mini),
+          _RailAccountCard(mini: mini),
         ],
       ),
     );
@@ -414,7 +442,9 @@ class _AdminSideRail extends StatelessWidget {
 }
 
 class _RailAccountCard extends StatelessWidget {
-  const _RailAccountCard();
+  final bool mini;
+
+  const _RailAccountCard({required this.mini});
 
   @override
   Widget build(BuildContext context) {
@@ -428,37 +458,73 @@ class _RailAccountCard extends StatelessWidget {
         .take(2)
         .join()
         .toUpperCase();
+    final avatar = CircleAvatar(
+      radius: 16,
+      backgroundColor: context.scheme.primary,
+      child: Text(
+        initials.isEmpty ? '?' : initials,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 12,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    );
+
+    if (mini) {
+      return Padding(
+        padding: const EdgeInsets.fromLTRB(10, 0, 10, 20),
+        child: Column(
+          children: [
+            Tooltip(message: name, child: avatar),
+            const SizedBox(height: 8),
+            IconButton(
+              tooltip: 'Log out',
+              icon: Icon(
+                Icons.logout_rounded,
+                size: 18,
+                color: context.appColors.textMuted,
+              ),
+              onPressed: () => confirmSignOut(context),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: AppColors.glassSurface,
+          color: context.appColors.glassSurface,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: AppColors.glassBorder),
+          border: Border.all(color: context.appColors.glassBorder),
         ),
         child: Row(
           children: [
-            CircleAvatar(
-              radius: 16,
-              backgroundColor: AppColors.primary,
-              child: Text(
-                initials.isEmpty ? '?' : initials,
-                style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700),
-              ),
-            ),
+            avatar,
             const SizedBox(width: 10),
             Expanded(
               child: Text(
                 name,
-                style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
             IconButton(
               tooltip: 'Log out',
-              icon: Icon(Icons.logout_rounded, size: 18, color: AppColors.textMuted),
-              onPressed: () => context.read<AuthService>().signOut(),
+              icon: Icon(
+                Icons.logout_rounded,
+                size: 18,
+                color: context.appColors.textMuted,
+              ),
+              onPressed: () => confirmSignOut(context),
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             ),
@@ -470,50 +536,73 @@ class _RailAccountCard extends StatelessWidget {
 }
 
 class _RailItem extends StatelessWidget {
-  final _NavDestinationSpec spec;
+  final NavDestinationSpec spec;
   final bool selected;
+  final bool mini;
   final VoidCallback onTap;
 
   const _RailItem({
     super.key,
     required this.spec,
     required this.selected,
+    required this.mini,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
-      child: Material(
-        color: selected ? AppColors.primary.withValues(alpha: 0.1) : Colors.transparent,
+    final icon = Icon(
+      selected ? spec.selectedIcon : spec.icon,
+      size: 20,
+      color: selected ? context.scheme.primary : context.appColors.textMuted,
+    );
+    final labelStyle = TextStyle(
+      fontSize: 13.5,
+      fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+      color: selected
+          ? context.scheme.primary
+          : context.appColors.textSecondary,
+    );
+
+    final button = Material(
+      color: selected
+          ? context.scheme.primary.withValues(alpha: 0.1)
+          : Colors.transparent,
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onTap,
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-            child: Row(
-              children: [
-                Icon(
-                  selected ? spec.selectedIcon : spec.icon,
-                  size: 20,
-                  color: selected ? AppColors.primary : AppColors.textMuted,
+        onTap: onTap,
+        child: mini
+            ? Padding(
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                child: Center(child: icon),
+              )
+            : Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 12,
                 ),
-                const SizedBox(width: 12),
-                Text(
-                  spec.label,
-                  style: TextStyle(
-                    fontSize: 13.5,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    color: selected ? AppColors.primary : AppColors.textSecondary,
-                  ),
+                child: Row(
+                  children: [
+                    icon,
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        spec.label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: labelStyle,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        ),
+              ),
       ),
+    );
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: mini ? 10 : 14, vertical: 4),
+      child: mini ? Tooltip(message: spec.label, child: button) : button,
     );
   }
 }

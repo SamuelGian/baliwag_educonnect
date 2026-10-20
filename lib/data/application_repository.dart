@@ -23,6 +23,16 @@ class ApplicationRepository {
         );
   }
 
+  /// Only applications against the signed-in provider's own scholarships
+  /// (Provider dashboard) — see [ScholarshipApplication.providerUid].
+  Stream<List<ScholarshipApplication>> watchForProvider(String providerUid) {
+    return _col.where('providerUid', isEqualTo: providerUid).snapshots().map(
+          (snap) =>
+              snap.docs.map((d) => ScholarshipApplication.fromMap(d.id, d.data())).toList()
+                ..sort((a, b) => b.dateSubmitted.compareTo(a.dateSubmitted)),
+        );
+  }
+
   Future<String> create(ScholarshipApplication draft) async {
     final ref = _col.doc();
     await ref.set(draft.toMap());

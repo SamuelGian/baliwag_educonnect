@@ -1,13 +1,20 @@
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import '../data/app_state.dart';
+import '../data/document_upload_limits.dart';
 import '../models/application.dart';
 import '../models/scholarship.dart';
-import '../theme/app_colors.dart';
+import '../services/document_gate_service.dart';
+import '../services/file_signature_validator.dart';
+import '../services/image_compression_service.dart';
+import '../theme/app_theme_context.dart';
+import '../theme/breakpoints.dart';
 import '../widgets/ambient_background.dart';
 import '../widgets/glass_panel.dart';
+import '../widgets/local_file_preview_dialog.dart';
 import '../widgets/scholarship_card.dart';
 
 const _stepTitles = ['Scholarship', 'Applicant Info', 'Documents', 'Review'];
@@ -19,6 +26,7 @@ const _stepTitles = ['Scholarship', 'Applicant Info', 'Documents', 'Review'];
 class _ApplicationDraft {
   final Scholarship scholarship;
   int step = 0;
+  bool submitting = false;
   final formKey = GlobalKey<FormState>();
   final fullName = TextEditingController();
   final courseYear = TextEditingController();
@@ -31,6 +39,20 @@ class _ApplicationDraft {
   late final List<DocumentItem> docs = scholarship.requirements
       .map((r) => DocumentItem(name: r))
       .toList();
+
+  /// Names of documents currently being checked by [DocumentGateService] —
+  /// drives the "Checking…" state on their upload tile (see
+  /// _DocumentUploader) while the Gemini call for that specific document is
+  /// in flight.
+  final Set<String> checkingDocs = {};
+
+  /// Keyed by document name: the most recent [DocumentGateService]
+  /// rejection reason for that document, if its last pick attempt was
+  /// turned away. Shown as a persistent note on the upload tile (see
+  /// _DocumentUploader) — not just the transient SnackBar shown at the
+  /// moment of rejection, which is easy to miss. Cleared the moment that
+  /// document is successfully uploaded.
+  final Map<String, String> gateRejections = {};
 
   _ApplicationDraft({required this.scholarship});
 
@@ -62,6 +84,7 @@ class _ScholarshipApplicationScreenState
     extends State<ScholarshipApplicationScreen> {
   String? _activeId;
   final Map<String, _ApplicationDraft> _drafts = {};
+  final _gateService = DocumentGateService();
 
   @override
   void dispose() {
@@ -90,13 +113,14 @@ class _ScholarshipApplicationScreenState
 
   void _discardDraft(String id) => _drafts.remove(id)?.dispose();
 
-  void _showDetails(BuildContext context, Scholarship s) {
+  void _showDetails(BuildContext context, AppState app, Scholarship s) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (_) => _ScholarshipDetailSheet(
         scholarship: s,
+        block: app.blockReasonFor(s),
         onApply: () {
           Navigator.pop(context);
           _openScholarship(s);
@@ -118,21 +142,121 @@ class _ScholarshipApplicationScreenState
         allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png'],
         withData: true,
       );
-      if (result == null || result.files.isEmpty) return;
+      if (result == null || result.files.isEmpty || !mounted) return;
+      final file = result.files.single;
+      var bytes = file.bytes;
+      var fileName = file.name;
+      // The file picker's allowedExtensions filter only looks at the
+      // filename — it never verifies what's actually inside. Checking the
+      // magic bytes here catches a mismatched/renamed file before it gets
+      // anywhere near storage or OCR.
+      if (bytes != null && !looksLikeAcceptedDocument(bytes)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              "This file doesn't look like a valid PDF, JPG, or PNG. "
+              'Please choose a different file.',
+            ),
+          ),
+        );
+        return;
+      }
+      if (bytes != null &&
+          !await _passesDocumentGate(draft: draft, doc: doc, bytes: bytes, fileName: fileName)) {
+        return;
+      }
+      if (!mounted) return;
+      if (bytes != null && bytes.length > kMaxDocumentFileBytes) {
+        final compressed = compressImageToFit(
+          bytes,
+          fileName,
+          kMaxDocumentFileBytes,
+        );
+        bytes = compressed.bytes;
+        fileName = compressed.fileName;
+      }
+      if (bytes != null && bytes.length > kMaxDocumentFileBytes) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'This file is too large even after compression (max ${(kMaxDocumentFileBytes / (1024 * 1024)).round()}MB). '
+              'Please upload a smaller PDF or a lower-resolution photo.',
+            ),
+          ),
+        );
+        return;
+      }
       setState(() {
         doc.uploaded = true;
-        doc.fileName = result.files.single.name;
-        doc.bytes = result.files.single.bytes;
+        doc.fileName = fileName;
+        doc.bytes = bytes;
+        draft.gateRejections.remove(doc.name);
       });
     } catch (_) {
       setState(() {
         doc.uploaded = true;
         doc.fileName = 'document.pdf';
+        draft.gateRejections.remove(doc.name);
       });
     }
   }
 
+  /// Immediate pick-time gate: asks Gemini whether [bytes] actually looks
+  /// like the kind of document [doc.name] asks for, before it's ever
+  /// accepted into the draft. Shown as a "Checking…" state on the document's
+  /// tile while it runs (see [_ApplicationDraft.checkingDocs]).
+  ///
+  /// Fails open on an infrastructure problem (missing key, network error,
+  /// timeout) rather than blocking the applicant over an outage — same
+  /// philosophy as the OCR pipeline's own exception handling, which falls
+  /// back to "flagged for manual review" instead of erroring out. Only a
+  /// confident "this isn't the right document" verdict blocks the upload.
+  Future<bool> _passesDocumentGate({
+    required _ApplicationDraft draft,
+    required DocumentItem doc,
+    required Uint8List bytes,
+    required String fileName,
+  }) async {
+    setState(() => draft.checkingDocs.add(doc.name));
+    try {
+      final result = await _gateService
+          .check(bytes: bytes, fileName: fileName, expectedDocumentName: doc.name)
+          .timeout(const Duration(seconds: 30));
+      if (!result.accepted) {
+        final message =
+            'This looks like ${result.detectedContent}, not "${doc.name}". '
+            'Please upload the correct document.';
+        setState(() => draft.gateRejections[doc.name] = message);
+        if (!mounted) return false;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+        return false;
+      }
+      return true;
+    } catch (e) {
+      // Infrastructure failure, not a content verdict — let it through to
+      // the existing OCR pipeline rather than blocking the applicant. Still
+      // surfaced (not silent) so a persistent failure here is visible and
+      // diagnosable instead of looking like the gate quietly approved it.
+      debugPrint('Document gate check failed, letting file through: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Could not auto-verify this document right now — it will '
+              'still be checked after you submit.',
+            ),
+          ),
+        );
+      }
+      return true;
+    } finally {
+      if (mounted) setState(() => draft.checkingDocs.remove(doc.name));
+    }
+  }
+
   void _next(_ApplicationDraft draft) {
+    if (draft.submitting) return;
     if (draft.step == 1 && !_canProceedFromInfo(draft)) return;
     if (draft.step == 2 && !_canProceedFromDocs(draft)) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -177,21 +301,45 @@ class _ScholarshipApplicationScreenState
     });
   }
 
-  void _submit(_ApplicationDraft draft) {
+  Future<void> _submit(_ApplicationDraft draft) async {
+    // Was previously fire-and-forget: the "Application Submitted" success
+    // dialog showed unconditionally, even if the Firestore write itself
+    // failed (offline, blocked by a last-second deadline/slot check in
+    // AppState.submitApplication, etc.) — a false-positive success message.
+    // `submitting` also closes the double-submit window: the button below
+    // disables for the duration of the call instead of staying tappable.
     final app = context.read<AppState>();
     final scholarshipTitle = draft.scholarship.title;
-    app.submitApplication(
-      scholarship: draft.scholarship,
-      applicantFullName: draft.fullName.text.trim(),
-      documents: draft.docs,
-    );
+    setState(() => draft.submitting = true);
+    try {
+      await app.submitApplication(
+        scholarship: draft.scholarship,
+        applicantFullName: draft.fullName.text.trim(),
+        documents: draft.docs,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => draft.submitting = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            e is StateError
+                ? e.message
+                : 'Could not submit your application. Please try again.',
+          ),
+        ),
+      );
+      return;
+    }
+    if (!mounted) return;
+    setState(() => draft.submitting = false);
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
           children: [
-            Icon(Icons.check_circle_rounded, color: AppColors.success),
+            Icon(Icons.check_circle_rounded, color: context.appColors.success),
             const SizedBox(width: 10),
             const Text('Application Submitted'),
           ],
@@ -218,15 +366,20 @@ class _ScholarshipApplicationScreenState
   @override
   Widget build(BuildContext context) {
     final app = context.watch<AppState>();
-    final wide = MediaQuery.of(context).size.width >= 900;
+    final wide = MediaQuery.of(context).size.width >= kDesktopBreakpoint;
     final active = _activeId == null ? null : _findScholarship(app, _activeId!);
 
     return AmbientBackground(
       child: SafeArea(
         child: SingleChildScrollView(
-          padding: EdgeInsets.symmetric(
-            horizontal: wide ? 32 : 18,
-            vertical: 24,
+          // Extra bottom clearance on narrow screens only, so page content
+          // (and the final "Submit"/"Next" button) can scroll clear of the
+          // floating GlassNavBar instead of ending up hidden under it.
+          padding: EdgeInsets.fromLTRB(
+            wide ? 32 : 18,
+            24,
+            wide ? 32 : 18,
+            wide ? 24 : 120,
           ),
           child: Center(
             child: ConstrainedBox(
@@ -254,13 +407,16 @@ class _ScholarshipApplicationScreenState
           style: TextStyle(
             fontSize: 16,
             fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
+            color: context.appColors.textPrimary,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           'The program may have been removed by the scholarship office.',
-          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          style: TextStyle(
+            fontSize: 13,
+            color: context.appColors.textSecondary,
+          ),
         ),
         const SizedBox(height: 16),
         OutlinedButton(
@@ -283,13 +439,16 @@ class _ScholarshipApplicationScreenState
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
+            color: context.appColors.textPrimary,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           'Browse open programs and apply to as many as you\'d like — each keeps its own progress.',
-          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          style: TextStyle(
+            fontSize: 13,
+            color: context.appColors.textSecondary,
+          ),
         ),
         const SizedBox(height: 22),
         if (app.scholarships.isEmpty)
@@ -300,7 +459,7 @@ class _ScholarshipApplicationScreenState
               child: Center(
                 child: Text(
                   'No scholarship programs are open right now. Check back soon.',
-                  style: TextStyle(color: AppColors.textSecondary),
+                  style: TextStyle(color: context.appColors.textSecondary),
                 ),
               ),
             ),
@@ -324,12 +483,10 @@ class _ScholarshipApplicationScreenState
                       width: cardWidth,
                       child: _BrowseCard(
                         scholarship: s,
-                        alreadyApplied: app.myApplications.any(
-                          (a) => a.scholarshipTitle == s.title,
-                        ),
+                        block: app.blockReasonFor(s),
                         draftStep: _drafts[s.id]?.step,
                         onApply: () => _openScholarship(s),
-                        onViewDetails: () => _showDetails(context, s),
+                        onViewDetails: () => _showDetails(context, app, s),
                       ),
                     ),
                 ],
@@ -360,13 +517,16 @@ class _ScholarshipApplicationScreenState
           style: TextStyle(
             fontSize: 22,
             fontWeight: FontWeight.w700,
-            color: AppColors.textPrimary,
+            color: context.appColors.textPrimary,
           ),
         ),
         const SizedBox(height: 4),
         Text(
           'Complete the steps below to submit your application.',
-          style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+          style: TextStyle(
+            fontSize: 13,
+            color: context.appColors.textSecondary,
+          ),
         ),
         const SizedBox(height: 24),
         _StepIndicator(step: draft.step),
@@ -384,20 +544,29 @@ class _ScholarshipApplicationScreenState
           children: [
             if (draft.step > 0)
               OutlinedButton(
-                onPressed: () => _back(draft),
+                onPressed: draft.submitting ? null : () => _back(draft),
                 child: const Text('Back'),
               ),
             const Spacer(),
             FilledButton(
-              onPressed: () => _next(draft),
+              onPressed: draft.submitting ? null : () => _next(draft),
               style: FilledButton.styleFrom(
-                backgroundColor: AppColors.primary,
+                backgroundColor: context.scheme.primary,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 28,
                   vertical: 16,
                 ),
               ),
-              child: Text(draft.step == 3 ? 'Submit Application' : 'Continue'),
+              child: draft.submitting
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2.2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(draft.step == 3 ? 'Submit Application' : 'Continue'),
             ),
           ],
         ),
@@ -433,6 +602,8 @@ class _ScholarshipApplicationScreenState
         return _DocumentUploader(
           key: const ValueKey(2),
           docs: draft.docs,
+          checkingDocs: draft.checkingDocs,
+          gateRejections: draft.gateRejections,
           onPick: (d) => _pickFile(draft, d),
         );
       default:
@@ -451,14 +622,19 @@ class _ScholarshipApplicationScreenState
 
 class _BrowseCard extends StatelessWidget {
   final Scholarship scholarship;
-  final bool alreadyApplied;
+
+  /// Non-null when the student can't (re-)apply right now — see
+  /// AppState.blockReasonFor. Disables the card's Apply button and shows
+  /// the reason as a badge, instead of leaving it clickable and letting a
+  /// duplicate application through.
+  final ApplyBlock? block;
   final int? draftStep;
   final VoidCallback onApply;
   final VoidCallback onViewDetails;
 
   const _BrowseCard({
     required this.scholarship,
-    required this.alreadyApplied,
+    required this.block,
     required this.draftStep,
     required this.onApply,
     required this.onViewDetails,
@@ -469,26 +645,45 @@ class _BrowseCard extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (alreadyApplied || draftStep != null)
+        if (block != null || draftStep != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: _statusBadge(),
+            child: _statusBadge(context),
           ),
         ScholarshipCard(
           scholarship: scholarship,
-          onApply: onApply,
+          onApply: block == null ? onApply : null,
+          applyLabel: block?.label,
           onTap: onViewDetails,
         ),
       ],
     );
   }
 
-  Widget _statusBadge() {
-    final label = alreadyApplied
-        ? 'Already applied'
-        : 'Draft • Step ${draftStep! + 1} of 4';
-    final color = alreadyApplied ? AppColors.success : AppColors.info;
-    final bg = alreadyApplied ? AppColors.successBg : AppColors.infoBg;
+  Widget _statusBadge(BuildContext context) {
+    final label = block?.label ?? 'Draft • Step ${draftStep! + 1} of 4';
+    final (Color color, Color bg, IconData icon) = switch (block?.label) {
+      null => (
+        context.appColors.info,
+        context.appColors.infoBg,
+        Icons.edit_note_rounded,
+      ),
+      'Already Approved' => (
+        context.appColors.success,
+        context.appColors.successBg,
+        Icons.check_circle_rounded,
+      ),
+      'Already Applied' => (
+        context.appColors.info,
+        context.appColors.infoBg,
+        Icons.check_circle_rounded,
+      ),
+      _ => (
+        context.appColors.warning,
+        context.appColors.warningBg,
+        Icons.info_rounded,
+      ), // Deadline Passed, Slots Full
+    };
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
       decoration: BoxDecoration(
@@ -498,13 +693,7 @@ class _BrowseCard extends StatelessWidget {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(
-            alreadyApplied
-                ? Icons.check_circle_rounded
-                : Icons.edit_note_rounded,
-            size: 13,
-            color: color,
-          ),
+          Icon(icon, size: 13, color: color),
           const SizedBox(width: 5),
           Text(
             label,
@@ -522,10 +711,12 @@ class _BrowseCard extends StatelessWidget {
 
 class _ScholarshipDetailSheet extends StatelessWidget {
   final Scholarship scholarship;
+  final ApplyBlock? block;
   final VoidCallback onApply;
 
   const _ScholarshipDetailSheet({
     required this.scholarship,
+    required this.block,
     required this.onApply,
   });
 
@@ -551,7 +742,7 @@ class _ScholarshipDetailSheet extends StatelessWidget {
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
-                        color: AppColors.border,
+                        color: context.appColors.border,
                         borderRadius: BorderRadius.circular(4),
                       ),
                     ),
@@ -563,12 +754,12 @@ class _ScholarshipDetailSheet extends StatelessWidget {
                       Container(
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.1),
+                          color: context.scheme.primary.withValues(alpha: 0.1),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Icon(
                           s.category.icon,
-                          color: AppColors.primary,
+                          color: context.scheme.primary,
                           size: 22,
                         ),
                       ),
@@ -589,7 +780,7 @@ class _ScholarshipDetailSheet extends StatelessWidget {
                               s.provider,
                               style: TextStyle(
                                 fontSize: 12.5,
-                                color: AppColors.textSecondary,
+                                color: context.appColors.textSecondary,
                               ),
                             ),
                           ],
@@ -602,7 +793,7 @@ class _ScholarshipDetailSheet extends StatelessWidget {
                     s.description,
                     style: TextStyle(
                       fontSize: 13,
-                      color: AppColors.textSecondary,
+                      color: context.appColors.textSecondary,
                       height: 1.5,
                     ),
                   ),
@@ -611,13 +802,22 @@ class _ScholarshipDetailSheet extends StatelessWidget {
                     spacing: 24,
                     runSpacing: 12,
                     children: [
-                      _stat('Amount', '₱${s.amount.toStringAsFixed(0)}'),
-                      _stat('Slots left', '${s.slotsLeft} / ${s.totalSlots}'),
                       _stat(
+                        context,
+                        'Amount',
+                        '₱${s.amount.toStringAsFixed(0)}',
+                      ),
+                      _stat(
+                        context,
+                        'Slots left',
+                        '${s.slotsLeft} / ${s.totalSlots}',
+                      ),
+                      _stat(
+                        context,
                         'Deadline',
                         DateFormat('MMM d, y').format(s.deadline),
                       ),
-                      _stat('Category', s.category.label),
+                      _stat(context, 'Category', s.category.label),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -635,7 +835,7 @@ class _ScholarshipDetailSheet extends StatelessWidget {
                           Icon(
                             Icons.description_outlined,
                             size: 15,
-                            color: AppColors.textMuted,
+                            color: context.appColors.textMuted,
                           ),
                           const SizedBox(width: 8),
                           Expanded(
@@ -651,14 +851,12 @@ class _ScholarshipDetailSheet extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton(
-                      onPressed: s.slotsLeft == 0 ? null : onApply,
+                      onPressed: block == null ? onApply : null,
                       style: FilledButton.styleFrom(
-                        backgroundColor: AppColors.primary,
+                        backgroundColor: context.scheme.primary,
                         padding: const EdgeInsets.symmetric(vertical: 16),
                       ),
-                      child: Text(
-                        s.slotsLeft == 0 ? 'Slots Full' : 'Apply Now',
-                      ),
+                      child: Text(block == null ? 'Apply Now' : block!.label),
                     ),
                   ),
                 ],
@@ -670,11 +868,14 @@ class _ScholarshipDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _stat(String label, String value) {
+  Widget _stat(BuildContext context, String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: context.appColors.textMuted),
+        ),
         const SizedBox(height: 2),
         Text(
           value,
@@ -706,8 +907,8 @@ class _StepIndicator extends StatelessWidget {
                         color: i == 0
                             ? Colors.transparent
                             : (i <= step
-                                  ? AppColors.primary
-                                  : AppColors.border),
+                                  ? context.scheme.primary
+                                  : context.appColors.border),
                       ),
                     ),
                     Container(
@@ -717,12 +918,12 @@ class _StepIndicator extends StatelessWidget {
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
                         color: i <= step
-                            ? AppColors.primary
-                            : AppColors.neutralBg,
+                            ? context.scheme.primary
+                            : context.appColors.neutralBg,
                         border: Border.all(
                           color: i <= step
-                              ? AppColors.primary
-                              : AppColors.border,
+                              ? context.scheme.primary
+                              : context.appColors.border,
                         ),
                       ),
                       child: i < step
@@ -738,7 +939,7 @@ class _StepIndicator extends StatelessWidget {
                                 fontWeight: FontWeight.w700,
                                 color: i == step
                                     ? Colors.white
-                                    : AppColors.textMuted,
+                                    : context.appColors.textMuted,
                               ),
                             ),
                     ),
@@ -747,7 +948,9 @@ class _StepIndicator extends StatelessWidget {
                         height: 3,
                         color: i == _stepTitles.length - 1
                             ? Colors.transparent
-                            : (i < step ? AppColors.primary : AppColors.border),
+                            : (i < step
+                                  ? context.scheme.primary
+                                  : context.appColors.border),
                       ),
                     ),
                   ],
@@ -758,7 +961,9 @@ class _StepIndicator extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: i == step ? FontWeight.w700 : FontWeight.w500,
-                    color: i == step ? AppColors.primary : AppColors.textMuted,
+                    color: i == step
+                        ? context.scheme.primary
+                        : context.appColors.textMuted,
                   ),
                 ),
               ],
@@ -793,10 +998,14 @@ class _ScholarshipRecap extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.08),
+                color: context.scheme.primary.withValues(alpha: 0.08),
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: Icon(s.category.icon, color: AppColors.primary, size: 22),
+              child: Icon(
+                s.category.icon,
+                color: context.scheme.primary,
+                size: 22,
+              ),
             ),
             const SizedBox(width: 14),
             Expanded(
@@ -815,7 +1024,7 @@ class _ScholarshipRecap extends StatelessWidget {
                     s.provider,
                     style: TextStyle(
                       fontSize: 12.5,
-                      color: AppColors.textSecondary,
+                      color: context.appColors.textSecondary,
                     ),
                   ),
                 ],
@@ -828,7 +1037,7 @@ class _ScholarshipRecap extends StatelessWidget {
           s.description,
           style: TextStyle(
             fontSize: 12.5,
-            color: AppColors.textSecondary,
+            color: context.appColors.textSecondary,
             height: 1.5,
           ),
         ),
@@ -837,9 +1046,13 @@ class _ScholarshipRecap extends StatelessWidget {
           spacing: 22,
           runSpacing: 10,
           children: [
-            _stat('Amount', '₱${s.amount.toStringAsFixed(0)}'),
-            _stat('Slots left', '${s.slotsLeft} / ${s.totalSlots}'),
-            _stat('Deadline', DateFormat('MMM d, y').format(s.deadline)),
+            _stat(context, 'Amount', '₱${s.amount.toStringAsFixed(0)}'),
+            _stat(context, 'Slots left', '${s.slotsLeft} / ${s.totalSlots}'),
+            _stat(
+              context,
+              'Deadline',
+              DateFormat('MMM d, y').format(s.deadline),
+            ),
           ],
         ),
         const SizedBox(height: 16),
@@ -856,7 +1069,7 @@ class _ScholarshipRecap extends StatelessWidget {
                 Icon(
                   Icons.description_outlined,
                   size: 14,
-                  color: AppColors.textMuted,
+                  color: context.appColors.textMuted,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -869,11 +1082,14 @@ class _ScholarshipRecap extends StatelessWidget {
     );
   }
 
-  Widget _stat(String label, String value) {
+  Widget _stat(BuildContext context, String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: TextStyle(fontSize: 11, color: AppColors.textMuted)),
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: context.appColors.textMuted),
+        ),
         const SizedBox(height: 2),
         Text(
           value,
@@ -932,7 +1148,10 @@ class _ApplicantInfoForm extends StatelessWidget {
             hasProfileDetails
                 ? 'Pull your saved details from Profile Settings, or clear the form and type them in yourself.'
                 : 'No saved Profile details yet — fill in manually below, or save them once in the Profile tab to auto-fill next time.',
-            style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+            style: TextStyle(
+              fontSize: 12,
+              color: context.appColors.textSecondary,
+            ),
           ),
           const SizedBox(height: 12),
           Wrap(
@@ -947,7 +1166,7 @@ class _ApplicantInfoForm extends StatelessWidget {
               OutlinedButton.icon(
                 onPressed: onClear,
                 style: OutlinedButton.styleFrom(
-                  foregroundColor: AppColors.textSecondary,
+                  foregroundColor: context.appColors.textSecondary,
                 ),
                 icon: const Icon(Icons.clear_rounded, size: 16),
                 label: const Text('Clear'),
@@ -1028,11 +1247,15 @@ class _ApplicantInfoForm extends StatelessWidget {
 
 class _DocumentUploader extends StatelessWidget {
   final List<DocumentItem> docs;
+  final Set<String> checkingDocs;
+  final Map<String, String> gateRejections;
   final ValueChanged<DocumentItem> onPick;
 
   const _DocumentUploader({
     super.key,
     required this.docs,
+    required this.checkingDocs,
+    required this.gateRejections,
     required this.onPick,
   });
 
@@ -1049,26 +1272,46 @@ class _DocumentUploader extends StatelessWidget {
         const SizedBox(height: 4),
         Text(
           'Accepted formats: PDF, JPG, PNG. Files will be auto-checked against your student records.',
-          style: TextStyle(fontSize: 12, color: AppColors.textSecondary),
+          style: TextStyle(
+            fontSize: 12,
+            color: context.appColors.textSecondary,
+          ),
         ),
         const SizedBox(height: 16),
         for (final d in docs)
-          Container(
+          Builder(
+            builder: (context) {
+              final checking = checkingDocs.contains(d.name);
+              return Container(
             margin: const EdgeInsets.only(bottom: 10),
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: AppColors.neutralBg,
+              color: context.appColors.neutralBg,
               borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: AppColors.border),
+              border: Border.all(color: context.appColors.border),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Icon(
-                  d.uploaded
-                      ? Icons.description_rounded
-                      : Icons.upload_file_rounded,
-                  color: d.uploaded ? AppColors.success : AppColors.textMuted,
-                ),
+                Row(
+                  children: [
+                checking
+                    ? SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.4,
+                          color: context.scheme.primary,
+                        ),
+                      )
+                    : Icon(
+                        d.uploaded
+                            ? Icons.description_rounded
+                            : Icons.upload_file_rounded,
+                        color: d.uploaded
+                            ? context.appColors.success
+                            : context.appColors.textMuted,
+                      ),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -1076,6 +1319,8 @@ class _DocumentUploader extends StatelessWidget {
                     children: [
                       Text(
                         d.name,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
                           fontWeight: FontWeight.w600,
                           fontSize: 13,
@@ -1086,21 +1331,82 @@ class _DocumentUploader extends StatelessWidget {
                           padding: const EdgeInsets.only(top: 2),
                           child: Text(
                             d.fileName ?? '',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 11.5,
-                              color: AppColors.textSecondary,
+                              color: context.appColors.textSecondary,
                             ),
                           ),
                         ),
                     ],
                   ),
                 ),
+                if (d.uploaded && d.bytes != null) ...[
+                  IconButton(
+                    tooltip: 'Preview',
+                    icon: Icon(
+                      Icons.visibility_outlined,
+                      color: context.appColors.textSecondary,
+                    ),
+                    onPressed: () => showDialog(
+                      context: context,
+                      builder: (_) => LocalFilePreviewDialog(
+                        bytes: d.bytes!,
+                        fileName: d.fileName ?? d.name,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 4),
                 OutlinedButton(
-                  onPressed: () => onPick(d),
-                  child: Text(d.uploaded ? 'Replace' : 'Upload'),
+                  onPressed: checking ? null : () => onPick(d),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                  ),
+                  child: Text(
+                    checking ? 'Checking…' : (d.uploaded ? 'Replace' : 'Upload'),
+                  ),
                 ),
+                  ],
+                ),
+                if (gateRejections[d.name] != null) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 10),
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: context.appColors.dangerBg,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Icon(
+                            Icons.flag_outlined,
+                            size: 16,
+                            color: context.scheme.error,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              gateRejections[d.name]!,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: context.scheme.error,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
+          );
+            },
           ),
       ],
     );
@@ -1136,11 +1442,11 @@ class _ReviewStep extends StatelessWidget {
           style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
         ),
         const SizedBox(height: 14),
-        _row('Scholarship', scholarship.title),
-        _row('Full Name', fullName),
-        _row('Course & Year', courseYear),
-        _row('Contact', contact),
-        _row('Email', email),
+        _row(context, 'Scholarship', scholarship.title),
+        _row(context, 'Full Name', fullName),
+        _row(context, 'Course & Year', courseYear),
+        _row(context, 'Contact', contact),
+        _row(context, 'Email', email),
         const SizedBox(height: 10),
         const Text(
           'Documents',
@@ -1155,15 +1461,26 @@ class _ReviewStep extends StatelessWidget {
                 Icon(
                   Icons.check_circle_rounded,
                   size: 15,
-                  color: AppColors.success,
+                  color: context.appColors.success,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
+                  flex: 3,
                   child: Text(d.name, style: const TextStyle(fontSize: 12.5)),
                 ),
-                Text(
-                  d.fileName ?? '',
-                  style: TextStyle(fontSize: 11.5, color: AppColors.textMuted),
+                const SizedBox(width: 6),
+                Flexible(
+                  flex: 2,
+                  child: Text(
+                    d.fileName ?? '',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                    textAlign: TextAlign.end,
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: context.appColors.textMuted,
+                    ),
+                  ),
                 ),
               ],
             ),
@@ -1172,17 +1489,20 @@ class _ReviewStep extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: AppColors.infoBg,
+            color: context.appColors.infoBg,
             borderRadius: BorderRadius.circular(12),
           ),
           child: Row(
             children: [
-              Icon(Icons.info_rounded, size: 16, color: AppColors.info),
+              Icon(Icons.info_rounded, size: 16, color: context.appColors.info),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   'By submitting, you confirm all information and documents provided are true and correct.',
-                  style: TextStyle(fontSize: 11.5, color: AppColors.info),
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: context.appColors.info,
+                  ),
                 ),
               ),
             ],
@@ -1192,7 +1512,7 @@ class _ReviewStep extends StatelessWidget {
     );
   }
 
-  Widget _row(String label, String value) {
+  Widget _row(BuildContext context, String label, String value) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Row(
@@ -1202,7 +1522,10 @@ class _ReviewStep extends StatelessWidget {
             width: 120,
             child: Text(
               label,
-              style: TextStyle(fontSize: 12.5, color: AppColors.textSecondary),
+              style: TextStyle(
+                fontSize: 12.5,
+                color: context.appColors.textSecondary,
+              ),
             ),
           ),
           Expanded(

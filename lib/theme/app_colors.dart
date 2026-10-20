@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_semantic_colors.dart';
 
 /// Light-mode palette values. Deep academic blue as primary, warm gold as accent.
 class _Light {
@@ -108,8 +109,10 @@ class AppColors {
   static bool get isDark => _dark;
 
   static Color get primary => _dark ? _Dark.primary : _Light.primary;
-  static Color get primaryDark => _dark ? _Dark.primaryDark : _Light.primaryDark;
-  static Color get primaryLight => _dark ? _Dark.primaryLight : _Light.primaryLight;
+  static Color get primaryDark =>
+      _dark ? _Dark.primaryDark : _Light.primaryDark;
+  static Color get primaryLight =>
+      _dark ? _Dark.primaryLight : _Light.primaryLight;
 
   static Color get accent => _dark ? _Dark.accent : _Light.accent;
   static Color get accentDark => _dark ? _Dark.accentDark : _Light.accentDark;
@@ -126,19 +129,27 @@ class AppColors {
   static Color get info => _dark ? _Dark.info : _Light.info;
   static Color get infoBg => _dark ? _Dark.infoBg : _Light.infoBg;
 
-  static Color get statusSubmitted => _dark ? _Dark.statusSubmitted : _Light.statusSubmitted;
-  static Color get statusSubmittedBg => _dark ? _Dark.statusSubmittedBg : _Light.statusSubmittedBg;
-  static Color get statusVerifying => _dark ? _Dark.statusVerifying : _Light.statusVerifying;
-  static Color get statusVerifyingBg => _dark ? _Dark.statusVerifyingBg : _Light.statusVerifyingBg;
-  static Color get statusReviewing => _dark ? _Dark.statusReviewing : _Light.statusReviewing;
-  static Color get statusReviewingBg => _dark ? _Dark.statusReviewingBg : _Light.statusReviewingBg;
+  static Color get statusSubmitted =>
+      _dark ? _Dark.statusSubmitted : _Light.statusSubmitted;
+  static Color get statusSubmittedBg =>
+      _dark ? _Dark.statusSubmittedBg : _Light.statusSubmittedBg;
+  static Color get statusVerifying =>
+      _dark ? _Dark.statusVerifying : _Light.statusVerifying;
+  static Color get statusVerifyingBg =>
+      _dark ? _Dark.statusVerifyingBg : _Light.statusVerifyingBg;
+  static Color get statusReviewing =>
+      _dark ? _Dark.statusReviewing : _Light.statusReviewing;
+  static Color get statusReviewingBg =>
+      _dark ? _Dark.statusReviewingBg : _Light.statusReviewingBg;
 
   static Color get neutralBg => _dark ? _Dark.neutralBg : _Light.neutralBg;
   static Color get surface => _dark ? _Dark.surface : _Light.surface;
   static Color get border => _dark ? _Dark.border : _Light.border;
 
-  static Color get textPrimary => _dark ? _Dark.textPrimary : _Light.textPrimary;
-  static Color get textSecondary => _dark ? _Dark.textSecondary : _Light.textSecondary;
+  static Color get textPrimary =>
+      _dark ? _Dark.textPrimary : _Light.textPrimary;
+  static Color get textSecondary =>
+      _dark ? _Dark.textSecondary : _Light.textSecondary;
   static Color get textMuted => _dark ? _Dark.textMuted : _Light.textMuted;
 
   static List<Color> get heroGradient => _dark
@@ -148,12 +159,50 @@ class AppColors {
 
   static Color get cardShadow => _dark ? _Dark.cardShadow : _Light.cardShadow;
 
-  static Color get glassSurface => _dark ? _Dark.glassSurface : _Light.glassSurface;
+  static Color get glassSurface =>
+      _dark ? _Dark.glassSurface : _Light.glassSurface;
   static Color get glassSurfaceStrong =>
       _dark ? _Dark.glassSurfaceStrong : _Light.glassSurfaceStrong;
-  static Color get glassBorder => _dark ? _Dark.glassBorder : _Light.glassBorder;
+  static Color get glassBorder =>
+      _dark ? _Dark.glassBorder : _Light.glassBorder;
 
   /// Ambient ordered pair of glow colors (used behind glass panels as soft,
   /// blurred color blobs) — primary hue + accent hue, tuned per mode.
   static List<Color> get glowColors => [primary, accent];
+
+  /// Assembles the current mode's values into the [ThemeExtension] consumed
+  /// via `Theme.of(context)` (see app_theme_context.dart) — read exactly
+  /// like every other getter above, so it must be built only after
+  /// [setDark] has been called for the mode being themed (same rule
+  /// AppTheme's own builder already follows).
+  static AppSemanticColors get semantic => AppSemanticColors(
+    success: success,
+    successBg: successBg,
+    warning: warning,
+    warningBg: warningBg,
+    dangerBg: dangerBg,
+    info: info,
+    infoBg: infoBg,
+    statusSubmitted: statusSubmitted,
+    statusSubmittedBg: statusSubmittedBg,
+    statusVerifying: statusVerifying,
+    statusVerifyingBg: statusVerifyingBg,
+    statusReviewing: statusReviewing,
+    statusReviewingBg: statusReviewingBg,
+    neutralBg: neutralBg,
+    textPrimary: textPrimary,
+    textSecondary: textSecondary,
+    textMuted: textMuted,
+    border: border,
+    cardShadow: cardShadow,
+    glassSurface: glassSurface,
+    glassSurfaceStrong: glassSurfaceStrong,
+    glassBorder: glassBorder,
+    primaryDark: primaryDark,
+    primaryLight: primaryLight,
+    accentDark: accentDark,
+    heroGradient: heroGradient,
+    accentGradient: accentGradient,
+    glowColors: glowColors,
+  );
 }

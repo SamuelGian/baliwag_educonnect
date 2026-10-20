@@ -35,8 +35,65 @@ extension ScholarshipCategoryX on ScholarshipCategory {
   }
 }
 
-ScholarshipCategory categoryFromName(String? name) => ScholarshipCategory.values
-    .firstWhere((c) => c.name == name, orElse: () => ScholarshipCategory.academic);
+ScholarshipCategory categoryFromName(String? name) =>
+    ScholarshipCategory.values.firstWhere(
+      (c) => c.name == name,
+      orElse: () => ScholarshipCategory.academic,
+    );
+
+/// A scholarship's current lifecycle state. Below this, at or above it: the
+/// deadline. Chosen as 3 days per the "closing soon" threshold this was
+/// built for — change here, not per-screen, if that window should differ.
+const int kClosingSoonDays = 3;
+
+enum ScholarshipStatus {
+  active,
+  closingSoon,
+  slotsFull,
+  deadlinePassed,
+  manuallyClosed,
+}
+
+extension ScholarshipStatusX on ScholarshipStatus {
+  String get label {
+    switch (this) {
+      case ScholarshipStatus.active:
+        return 'Active';
+      case ScholarshipStatus.closingSoon:
+        return 'Closing Soon';
+      case ScholarshipStatus.slotsFull:
+        return 'Slots Full';
+      case ScholarshipStatus.deadlinePassed:
+        return 'Deadline Passed';
+      case ScholarshipStatus.manuallyClosed:
+        return 'Closed';
+    }
+  }
+
+  /// Whether a student may still submit a *new* application under this
+  /// status. Everything except [active]/[closingSoon] blocks new
+  /// applications — see AppState.blockReasonFor, which enforces this same
+  /// rule on the student side.
+  bool get acceptsApplications =>
+      this == ScholarshipStatus.active || this == ScholarshipStatus.closingSoon;
+}
+
+/// Single source of truth for a scholarship's current status — used by both
+/// the admin's "Manage Scholarships" list and every student-facing screen
+/// (browse grid, detail sheet, and AppState.blockReasonFor's Apply-button
+/// gating) so the two sides can never disagree about whether a given
+/// program is still open. A manual admin close (see
+/// [Scholarship.manuallyClosed]) always wins, even if the deadline hasn't
+/// arrived yet and slots remain — that's the point of the override.
+ScholarshipStatus getScholarshipStatus(Scholarship s) {
+  if (s.manuallyClosed) return ScholarshipStatus.manuallyClosed;
+  if (s.deadline.isBefore(DateTime.now())) {
+    return ScholarshipStatus.deadlinePassed;
+  }
+  if (s.slotsLeft <= 0) return ScholarshipStatus.slotsFull;
+  if (s.daysLeft <= kClosingSoonDays) return ScholarshipStatus.closingSoon;
+  return ScholarshipStatus.active;
+}
 
 class Scholarship {
   final String id;
@@ -50,6 +107,19 @@ class Scholarship {
   final ScholarshipCategory category;
   final List<String> requirements;
 
+  /// Admin override to stop accepting new applications immediately,
+  /// regardless of deadline or remaining slots — see "Close Applications
+  /// Early" in the Manage Scholarships list. Always takes priority in
+  /// [getScholarshipStatus].
+  final bool manuallyClosed;
+
+  /// UID of the [UserRole.provider] account that owns this program, or
+  /// empty for a scholarship created by Admin. Used to scope a provider's
+  /// own "Manage Scholarships" and "Applications" views to just their own
+  /// programs (see AppState and ScholarshipRepository.watchForProvider) —
+  /// [provider] above stays the free-text display name either way.
+  final String providerUid;
+
   const Scholarship({
     required this.id,
     required this.title,
@@ -61,6 +131,8 @@ class Scholarship {
     required this.deadline,
     required this.category,
     required this.requirements,
+    this.manuallyClosed = false,
+    this.providerUid = '',
   });
 
   int get slotsLeft => totalSlots - slotsFilled;
@@ -79,8 +151,12 @@ class Scholarship {
       deadline: (data['deadline'] as Timestamp?)?.toDate() ?? DateTime.now(),
       category: categoryFromName(data['category'] as String?),
       requirements:
-          (data['requirements'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-              const [],
+          (data['requirements'] as List<dynamic>?)
+              ?.map((e) => e.toString())
+              .toList() ??
+          const [],
+      manuallyClosed: data['manuallyClosed'] as bool? ?? false,
+      providerUid: data['providerUid'] as String? ?? '',
     );
   }
 
@@ -95,6 +171,8 @@ class Scholarship {
       'deadline': Timestamp.fromDate(deadline),
       'category': category.name,
       'requirements': requirements,
+      'manuallyClosed': manuallyClosed,
+      'providerUid': providerUid,
     };
   }
 
@@ -108,6 +186,8 @@ class Scholarship {
     DateTime? deadline,
     ScholarshipCategory? category,
     List<String>? requirements,
+    bool? manuallyClosed,
+    String? providerUid,
   }) {
     return Scholarship(
       id: id,
@@ -120,6 +200,8 @@ class Scholarship {
       deadline: deadline ?? this.deadline,
       category: category ?? this.category,
       requirements: requirements ?? this.requirements,
+      manuallyClosed: manuallyClosed ?? this.manuallyClosed,
+      providerUid: providerUid ?? this.providerUid,
     );
   }
 }

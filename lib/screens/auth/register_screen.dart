@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
-import '../../theme/app_colors.dart';
+import '../../theme/app_theme_context.dart';
 import '../../widgets/ambient_background.dart';
 import '../../widgets/glass_panel.dart';
 
@@ -12,7 +12,7 @@ class RegisterScreen extends StatefulWidget {
   State<RegisterScreen> createState() => _RegisterScreenState();
 }
 
-enum _RegisterRole { student, admin }
+enum _RegisterRole { student, admin, provider }
 
 class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
@@ -21,6 +21,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _fullName = TextEditingController();
   final _studentNumber = TextEditingController();
   final _course = TextEditingController();
+  final _organizationName = TextEditingController();
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _confirmPassword = TextEditingController();
@@ -36,6 +37,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       _fullName,
       _studentNumber,
       _course,
+      _organizationName,
       _email,
       _password,
       _confirmPassword,
@@ -54,23 +56,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
     try {
       final auth = context.read<AuthService>();
-      if (_role == _RegisterRole.student) {
-        await auth.registerStudent(
-          email: _email.text,
-          password: _password.text,
-          fullName: _fullName.text,
-          studentNumber: _studentNumber.text,
-          course: _course.text,
-        );
-      } else {
-        await auth.registerAdmin(
-          email: _email.text,
-          password: _password.text,
-          fullName: _fullName.text,
-          accessCode: _adminCode.text,
-        );
+      switch (_role) {
+        case _RegisterRole.student:
+          await auth.registerStudent(
+            email: _email.text,
+            password: _password.text,
+            fullName: _fullName.text,
+            studentNumber: _studentNumber.text,
+            course: _course.text,
+          );
+        case _RegisterRole.admin:
+          await auth.registerAdmin(
+            email: _email.text,
+            password: _password.text,
+            fullName: _fullName.text,
+            accessCode: _adminCode.text,
+          );
+        case _RegisterRole.provider:
+          await auth.registerProvider(
+            email: _email.text,
+            password: _password.text,
+            organizationName: _organizationName.text,
+            contactName: _fullName.text,
+          );
       }
-      // AuthGate reacts to the auth-state stream and swaps screens itself.
+      // Sign the brand-new account back out immediately rather than
+      // letting AuthGate auto-route straight into its dashboard: creating
+      // the Firebase Auth account also signs it in, but the profile doc
+      // above still needs a moment to land in Firestore — if AuthGate's
+      // reactive routing beat that write, a freshly-registered user could
+      // get bounced back to Login looking like a failure. Explicitly
+      // signing out (after the write above is confirmed done, since it was
+      // awaited) sidesteps that race entirely, and for Provider specifically
+      // explains the "pending approval" status up front in a dialog the
+      // user acknowledges, not as a surprise screen they land on.
+      await auth.signOut();
+      if (!mounted) return;
+      await _showSuccessDialog();
+      if (!mounted) return;
+      Navigator.pop(context);
     } on AuthException catch (e) {
       setState(() => _error = e.message);
     } catch (_) {
@@ -80,9 +104,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
+  Future<void> _showSuccessDialog() {
+    final isProvider = _role == _RegisterRole.provider;
+    return showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        icon: Icon(
+          Icons.check_circle_rounded,
+          color: context.appColors.success,
+          size: 36,
+        ),
+        title: const Text('Account created'),
+        content: Text(
+          isProvider
+              ? 'Your organization account was created successfully. An '
+                  "Admin needs to approve it before you can sign in — "
+                  "you'll be able to sign in once that happens."
+              : 'Your account was created successfully. You can now sign in.',
+          textAlign: TextAlign.center,
+        ),
+        actionsAlignment: MainAxisAlignment.center,
+        actions: [
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Back to Sign In'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final isStudent = _role == _RegisterRole.student;
+    final isProvider = _role == _RegisterRole.provider;
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -113,7 +170,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: AppColors.dangerBg,
+                            color: context.appColors.dangerBg,
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Row(
@@ -121,7 +178,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               Icon(
                                 Icons.error_rounded,
                                 size: 18,
-                                color: AppColors.danger,
+                                color: context.scheme.error,
                               ),
                               const SizedBox(width: 8),
                               Expanded(
@@ -129,7 +186,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   _error!,
                                   style: TextStyle(
                                     fontSize: 12.5,
-                                    color: AppColors.danger,
+                                    color: context.scheme.error,
                                   ),
                                 ),
                               ),
@@ -138,10 +195,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         ),
                         const SizedBox(height: 16),
                       ],
+                      if (isProvider) ...[
+                        TextFormField(
+                          controller: _organizationName,
+                          decoration: const InputDecoration(
+                            labelText: 'Organization Name',
+                            hintText: 'e.g. TESDA Provincial Office',
+                          ),
+                          validator: (v) => (v == null || v.trim().isEmpty)
+                              ? 'Required'
+                              : null,
+                        ),
+                        const SizedBox(height: 14),
+                      ],
                       TextFormField(
                         controller: _fullName,
-                        decoration: const InputDecoration(
-                          labelText: 'Full Name',
+                        decoration: InputDecoration(
+                          labelText: isProvider ? 'Contact Person' : 'Full Name',
                         ),
                         validator: (v) =>
                             (v == null || v.trim().isEmpty) ? 'Required' : null,
@@ -209,7 +279,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                             ? 'Passwords do not match'
                             : null,
                       ),
-                      if (!isStudent) ...[
+                      if (_role == _RegisterRole.admin) ...[
                         const SizedBox(height: 14),
                         TextFormField(
                           controller: _adminCode,
@@ -222,11 +292,42 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               : null,
                         ),
                       ],
+                      if (isProvider) ...[
+                        const SizedBox(height: 14),
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: context.appColors.neutralBg,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                Icons.hourglass_top_rounded,
+                                size: 16,
+                                color: context.appColors.textSecondary,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  'An Admin needs to approve your organization '
+                                  "before you can sign in and manage scholarships.",
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    color: context.appColors.textSecondary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                       const SizedBox(height: 22),
                       FilledButton(
                         onPressed: _loading ? null : _submit,
                         style: FilledButton.styleFrom(
-                          backgroundColor: AppColors.primary,
+                          backgroundColor: context.scheme.primary,
                           padding: const EdgeInsets.symmetric(vertical: 16),
                         ),
                         child: _loading
@@ -239,7 +340,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                 ),
                               )
                             : Text(
-                                'Create ${isStudent ? 'Student' : 'Admin'} Account',
+                                'Create ${switch (_role) {
+                                  _RegisterRole.student => 'Student',
+                                  _RegisterRole.admin => 'Admin',
+                                  _RegisterRole.provider => 'Provider',
+                                }} Account',
                               ),
                       ),
                     ],
@@ -265,14 +370,17 @@ class _RoleToggle extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(4),
       decoration: BoxDecoration(
-        color: AppColors.neutralBg,
+        color: context.appColors.neutralBg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AppColors.border),
+        border: Border.all(color: context.appColors.border),
       ),
       child: Row(
         children: [
           Expanded(child: _segment(context, 'Student', _RegisterRole.student)),
           Expanded(child: _segment(context, 'Admin', _RegisterRole.admin)),
+          Expanded(
+            child: _segment(context, 'Provider', _RegisterRole.provider),
+          ),
         ],
       ),
     );
@@ -287,7 +395,7 @@ class _RoleToggle extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 12),
         alignment: Alignment.center,
         decoration: BoxDecoration(
-          color: selected ? AppColors.primary : Colors.transparent,
+          color: selected ? context.scheme.primary : Colors.transparent,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Text(
@@ -295,7 +403,7 @@ class _RoleToggle extends StatelessWidget {
           style: TextStyle(
             fontWeight: FontWeight.w700,
             fontSize: 13,
-            color: selected ? Colors.white : AppColors.textSecondary,
+            color: selected ? Colors.white : context.appColors.textSecondary,
           ),
         ),
       ),

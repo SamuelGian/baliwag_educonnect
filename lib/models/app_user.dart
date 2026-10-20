@@ -1,7 +1,17 @@
-enum UserRole { student, admin }
+enum UserRole { student, admin, provider }
 
 UserRole userRoleFromName(String? name) =>
     UserRole.values.firstWhere((r) => r.name == name, orElse: () => UserRole.student);
+
+/// Only meaningful when [AppUser.role] is [UserRole.provider] — gates
+/// whether a provider account may actually sign in to [ProviderShell] (see
+/// AuthGate) or sits on a "waiting for approval" screen instead. Every
+/// provider starts [pending]; only an Admin can move it to [approved] or
+/// [rejected] (see the "Providers" tab on the Admin Dashboard).
+enum ProviderStatus { pending, approved, rejected }
+
+ProviderStatus providerStatusFromName(String? name) => ProviderStatus.values
+    .firstWhere((s) => s.name == name, orElse: () => ProviderStatus.pending);
 
 class AppUser {
   final String uid;
@@ -18,6 +28,15 @@ class AppUser {
   final String address;
   final String guardianName;
 
+  /// The scholarship-granting organization's display name — only set (and
+  /// only meaningful) for [UserRole.provider] accounts. Stamped onto every
+  /// scholarship a provider creates (see AppState.createScholarship) instead
+  /// of the freeform text field Admin uses.
+  final String organizationName;
+
+  /// Only meaningful for [UserRole.provider] — see [ProviderStatus].
+  final ProviderStatus providerStatus;
+
   const AppUser({
     required this.uid,
     required this.email,
@@ -28,6 +47,8 @@ class AppUser {
     this.contactNumber = '',
     this.address = '',
     this.guardianName = '',
+    this.organizationName = '',
+    this.providerStatus = ProviderStatus.pending,
   });
 
   /// Whether there's anything saved worth offering to auto-fill.
@@ -45,6 +66,8 @@ class AppUser {
       contactNumber: data['contactNumber'] as String? ?? '',
       address: data['address'] as String? ?? '',
       guardianName: data['guardianName'] as String? ?? '',
+      organizationName: data['organizationName'] as String? ?? '',
+      providerStatus: providerStatusFromName(data['providerStatus'] as String?),
     );
   }
 
@@ -58,6 +81,8 @@ class AppUser {
       'contactNumber': contactNumber,
       'address': address,
       'guardianName': guardianName,
+      'organizationName': organizationName,
+      'providerStatus': providerStatus.name,
     };
   }
 
@@ -68,6 +93,8 @@ class AppUser {
     String? contactNumber,
     String? address,
     String? guardianName,
+    String? organizationName,
+    ProviderStatus? providerStatus,
   }) {
     return AppUser(
       uid: uid,
@@ -79,6 +106,8 @@ class AppUser {
       contactNumber: contactNumber ?? this.contactNumber,
       address: address ?? this.address,
       guardianName: guardianName ?? this.guardianName,
+      organizationName: organizationName ?? this.organizationName,
+      providerStatus: providerStatus ?? this.providerStatus,
     );
   }
 }

@@ -18,6 +18,10 @@ class AppTheme {
         primary: AppColors.primary,
         secondary: AppColors.accent,
         surface: AppColors.surface,
+        // Explicit, rather than Material 3's auto-derived error color, so
+        // context.scheme.error is pixel-identical to the app's existing
+        // "danger" red instead of a generic algorithmic one.
+        error: AppColors.danger,
         brightness: brightness,
       ),
       scaffoldBackgroundColor: AppColors.neutralBg,
@@ -139,9 +143,7 @@ class AppTheme {
           fontWeight: FontWeight.w600,
         ),
         unselectedIconTheme: IconThemeData(color: AppColors.textMuted),
-        unselectedLabelTextStyle: GoogleFonts.inter(
-          color: AppColors.textMuted,
-        ),
+        unselectedLabelTextStyle: GoogleFonts.inter(color: AppColors.textMuted),
         indicatorColor: AppColors.primary.withValues(alpha: 0.1),
       ),
       navigationBarTheme: NavigationBarThemeData(
@@ -162,11 +164,9 @@ class AppTheme {
           );
         }),
       ),
-      dividerTheme: DividerThemeData(
-        color: AppColors.border,
-        thickness: 1,
-      ),
+      dividerTheme: DividerThemeData(color: AppColors.border, thickness: 1),
       splashFactory: InkSparkle.splashFactory,
+      extensions: [AppColors.semantic],
     );
   }
 }
